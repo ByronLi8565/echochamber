@@ -1,0 +1,288 @@
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+}
+
+#toolbar {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+#toolbar button {
+  padding: 8px 20px;
+  border: 1px solid #0f3460;
+  border-radius: 8px;
+  background: #0f3460;
+  color: #e0e0e0;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+#toolbar button:hover {
+  background: #1a4a8a;
+  border-color: #1a4a8a;
+}
+
+#toolbar button.active {
+  background: #e94560;
+  border-color: #e94560;
+  color: #fff;
+}
+
+#canvas-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+}
+
+#canvas-container.panning {
+  cursor: grabbing;
+}
+
+#canvas-container.placing {
+  cursor: crosshair;
+}
+
+#canvas-world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+}
+
+/* Canvas items shared */
+.canvas-item {
+  position: absolute;
+  user-select: none;
+  cursor: grab;
+}
+
+.canvas-item:active {
+  cursor: grabbing;
+}
+
+/* Text box */
+.textbox-item {
+  min-width: 140px;
+  min-height: 40px;
+  padding: 12px 16px;
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 8px;
+  color: #e0e0e0;
+  font-size: 14px;
+  line-height: 1.5;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.textbox-item:focus {
+  border-color: #e94560;
+  box-shadow: 0 2px 16px rgba(233, 69, 96, 0.2);
+  cursor: text;
+}
+
+/* ===== Soundboard ===== */
+
+.soundboard-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.soundboard-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Main bubble */
+.soundboard-bubble {
+  width: 130px;
+  height: 130px;
+  border-radius: 50%;
+  border: 2px solid #0f3460;
+  background: #16213e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #e0e0e0;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  flex-shrink: 0;
+}
+
+.soundboard-bubble:hover {
+  border-color: #1a4a8a;
+  transform: scale(1.05);
+}
+
+.soundboard-bubble.state-empty {
+  border-color: #0f3460;
+}
+
+.soundboard-bubble.state-recording {
+  background: #5c1a2a;
+  border-color: #e94560;
+  animation: pulse-recording 1s ease-in-out infinite;
+}
+
+.soundboard-bubble.state-has-audio {
+  border-color: #00d2ff;
+  background: #0a2a3e;
+}
+
+.soundboard-bubble.pulse-play {
+  transform: scale(1.08);
+  box-shadow: 0 0 20px rgba(0, 210, 255, 0.5);
+}
+
+@keyframes pulse-recording {
+  0%, 100% { box-shadow: 0 0 8px rgba(233, 69, 96, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(233, 69, 96, 0.6); }
+}
+
+.soundboard-icon {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.soundboard-status {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* Property bubbles column */
+.soundboard-props {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.prop-bubble {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1.5px solid #0f3460;
+  background: #16213e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: #8a8aaa;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
+  flex-shrink: 0;
+}
+
+.prop-bubble:hover {
+  border-color: #1a4a8a;
+  color: #c0c0e0;
+  transform: scale(1.1);
+}
+
+/* Hotkey bubble */
+.prop-hotkey {
+  font-size: 12px;
+  font-weight: 700;
+  color: #e0e0e0;
+  border-color: #3a3a6e;
+  background: #1e1e40;
+}
+
+.prop-hotkey.listening {
+  border-color: #e94560;
+  background: #5c1a2a;
+  color: #fff;
+  animation: pulse-listening 0.8s ease-in-out infinite;
+}
+
+@keyframes pulse-listening {
+  0%, 100% { box-shadow: 0 0 4px rgba(233, 69, 96, 0.3); }
+  50% { box-shadow: 0 0 12px rgba(233, 69, 96, 0.6); }
+}
+
+/* Filter bubbles active state */
+.prop-filter.active {
+  border-color: #00d2ff;
+  background: #0a2a3e;
+  color: #00d2ff;
+}
+
+.prop-filter[data-filter="slowed"].active {
+  border-color: #a855f7;
+  background: #2a1a40;
+  color: #a855f7;
+}
+
+.prop-filter[data-filter="reverb"].active {
+  border-color: #22c55e;
+  background: #0a2a1a;
+  color: #22c55e;
+}
+
+.prop-filter[data-filter="reversed"].active {
+  border-color: #f59e0b;
+  background: #2a2010;
+  color: #f59e0b;
+}
+
+.prop-filter[data-filter="nightcore"].active {
+  border-color: #ec4899;
+  background: #3a1030;
+  color: #ec4899;
+}
+
+/* Editable name label */
+.soundboard-name {
+  text-align: center;
+  font-size: 13px;
+  color: #a0a0c0;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  outline: none;
+  min-width: 60px;
+  max-width: 160px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.soundboard-name[contenteditable="true"] {
+  border-color: #0f3460;
+  background: #0a0a1e;
+  color: #e0e0e0;
+  cursor: text;
+}
