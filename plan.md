@@ -16,3 +16,8 @@ expand the music bubbles a bit
     - reverb
     - reversed
     - nightcore (faster + pitch corrected)
+
+I want state to be persisted, using Automerge as a CRDT library.
+Let's tackle this step by step. First off, I want all info in a soundboard (all sounds, their hotkeys, selected filters, labels) to be stored in an Automerge document. 
+Sounds probably have to be stored as their own files and then file paths put onto the document as an immutable string?
+Then I want this to persist to localstorage, with an option to download the soundboard as a (zip file? some easily portable thing) and load a downloaded file.

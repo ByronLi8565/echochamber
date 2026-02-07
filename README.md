@@ -1,15 +1,16 @@
-# echochamber
+Soundboard web-app for those phrases you and your friends just can't get out of your heads.
 
-To install dependencies:
+## Development
 
 ```bash
+# Install dependencies
 bun install
+
+# Start dev server (with auto-rebuild on changes)
+bun run dev
+
+# Build for production
+bun run build
 ```
 
-To run:
-
-```bash
-bun run index.ts
-```
-
-This project was created using `bun init` in bun v1.3.3. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+The dev server runs at `http://localhost:3000` and automatically rebuilds when you change any files in `src/`, `index.html`, or `styles.css`.

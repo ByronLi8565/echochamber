@@ -1,3 +1,5 @@
+import { persistence } from "./persistence.ts";
+
 const container = document.getElementById("canvas-container")!;
 const world = document.getElementById("canvas-world")!;
 
@@ -8,9 +10,16 @@ let panStartX = 0;
 let panStartY = 0;
 let panStartOffsetX = 0;
 let panStartOffsetY = 0;
+let viewportSaveTimeout: number | null = null;
 
 function applyTransform() {
   world.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+}
+
+export function restoreViewport(x: number, y: number) {
+  offsetX = x;
+  offsetY = y;
+  applyTransform();
 }
 
 container.addEventListener("pointerdown", (e) => {
@@ -40,6 +49,15 @@ container.addEventListener("pointerup", (e) => {
   isPanning = false;
   container.classList.remove("panning");
   container.releasePointerCapture(e.pointerId);
+
+  // Debounced viewport persistence (1000ms)
+  if (viewportSaveTimeout !== null) {
+    clearTimeout(viewportSaveTimeout);
+  }
+  viewportSaveTimeout = setTimeout(() => {
+    persistence.updateViewport(offsetX, offsetY);
+    viewportSaveTimeout = null;
+  }, 1000) as unknown as number;
 });
 
 export function screenToWorld(screenX: number, screenY: number): { x: number; y: number } {

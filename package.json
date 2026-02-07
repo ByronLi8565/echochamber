@@ -3,10 +3,23 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "dev": "bun run dev-server.ts",
+    "build": "bun build index.html --outdir dist",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:debug": "playwright test --debug"
+  },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@playwright/test": "^1.58.2",
+    "@types/bun": "latest",
+    "playwright": "^1.58.2"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "@automerge/automerge": "^3.2.3",
+    "fflate": "^0.8.2"
   }
 }

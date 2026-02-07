@@ -1,6 +1,8 @@
 import type { CanvasItem } from "./items.ts";
 import { generateId } from "./items.ts";
 import { consumeDrag } from "./drag.ts";
+import { persistence } from "./persistence.ts";
+import { saveAudio } from "./audio-storage.ts";
 
 // --- Shared audio infrastructure ---
 
@@ -73,9 +75,10 @@ interface FilterSet {
   nightcore: boolean;
 }
 
-export function createSoundboard(x: number, y: number): CanvasItem {
-  const id = generateId();
+export function createSoundboard(x: number, y: number, existingId?: string): CanvasItem {
+  const id = existingId || generateId();
   soundCounter++;
+  console.log(`[Soundboard] Creating soundboard ${id} (Sound ${soundCounter})`);
 
   // --- DOM structure ---
   const wrapper = document.createElement("div");
@@ -146,10 +149,11 @@ export function createSoundboard(x: number, y: number): CanvasItem {
   let audioBuffer: AudioBuffer | null = null;
   let reversedCache: AudioBuffer | null = null;
   let hotkey = assignHotkey();
+  let unsubscribe: (() => void) | null = null;
 
   hotkeyBubble.textContent = hotkey || "—";
 
-  function setState(newState: SoundState) {
+  function setState_internal(newState: SoundState) {
     bubble.classList.remove(`state-${state}`);
     state = newState;
     bubble.classList.add(`state-${state}`);
@@ -170,7 +174,7 @@ export function createSoundboard(x: number, y: number): CanvasItem {
     }
   }
 
-  setState("empty");
+  setState_internal("empty");
 
   // --- Recording ---
   async function startRecording() {
@@ -190,13 +194,18 @@ export function createSoundboard(x: number, y: number): CanvasItem {
         const arrayBuf = await blob.arrayBuffer();
         audioBuffer = await ctx.decodeAudioData(arrayBuf);
         reversedCache = null;
-        setState("has-audio");
+        setState_internal("has-audio");
+
+        // Persist audio to IndexedDB
+        const audioKey = `audio-${id}`;
+        await saveAudio(audioKey, audioBuffer);
+        persistence.setAudioFile(id, audioKey);
       });
 
       mediaRecorder.start();
-      setState("recording");
+      setState_internal("recording");
     } catch {
-      setState("empty");
+      setState_internal("empty");
     }
   }
 
@@ -248,14 +257,18 @@ export function createSoundboard(x: number, y: number): CanvasItem {
     e.stopPropagation();
     if (consumeDrag(wrapper)) return;
 
+    console.log(`[Soundboard ${id}] Bubble clicked, state: ${state}`);
     switch (state) {
       case "empty":
+        console.log(`[Soundboard ${id}] Starting recording...`);
         startRecording();
         break;
       case "recording":
+        console.log(`[Soundboard ${id}] Stopping recording...`);
         stopRecording();
         break;
       case "has-audio":
+        console.log(`[Soundboard ${id}] Playing sound...`);
         playSound();
         break;
     }
@@ -275,6 +288,14 @@ export function createSoundboard(x: number, y: number): CanvasItem {
 
       // Invalidate reversed cache when reversed toggle changes
       if (def.key === "reversed") reversedCache = null;
+
+      // Persist filter changes
+      persistence.updateSoundboardFilters(id, {
+        lowpass: filters.slowed ? 1 : 0,
+        highpass: filters.nightcore ? 1 : 0,
+        reverb: filters.reverb ? 1 : 0,
+        reversed: filters.reversed ? 1 : 0,
+      });
     });
   }
 
@@ -307,6 +328,9 @@ export function createSoundboard(x: number, y: number): CanvasItem {
     hotkeyRegistry.set(hotkey, playSound);
     hotkeyBubble.textContent = hotkey;
     stopListening();
+
+    // Persist hotkey change
+    persistence.updateSoundboardHotkey(id, hotkey);
   }
 
   hotkeyBubble.addEventListener("click", (e) => {
@@ -327,6 +351,48 @@ export function createSoundboard(x: number, y: number): CanvasItem {
     hotkeyRegistry.set(hotkey, playSound);
   }
 
+  // Subscribe to Automerge changes
+  unsubscribe = persistence.subscribeToItem(id, (itemData) => {
+    if (!itemData || itemData.type !== 'soundboard') return;
+
+    // Update filters
+    const newFilters: FilterSet = {
+      slowed: itemData.filters.lowpass > 0,
+      reverb: itemData.filters.reverb > 0,
+      reversed: itemData.filters.reversed > 0,
+      nightcore: itemData.filters.highpass > 0,
+    };
+
+    // Only update if changed
+    if (JSON.stringify(filters) !== JSON.stringify(newFilters)) {
+      Object.assign(filters, newFilters);
+      for (let i = 0; i < filterDefs.length; i++) {
+        const def = filterDefs[i]!;
+        const fb = filterBubbles[i]!;
+        fb.classList.toggle("active", filters[def.key]);
+      }
+      if (filters.reversed !== newFilters.reversed) {
+        reversedCache = null;
+      }
+    }
+
+    // Update hotkey
+    if (itemData.hotkey !== hotkey) {
+      if (hotkey) releaseHotkey(hotkey);
+      hotkey = itemData.hotkey;
+      if (hotkey) {
+        usedHotkeys.add(hotkey);
+        hotkeyRegistry.set(hotkey, playSound);
+      }
+      hotkeyBubble.textContent = hotkey || "—";
+    }
+
+    // Update name
+    if (itemData.name && itemData.name !== nameLabel.textContent) {
+      nameLabel.textContent = itemData.name;
+    }
+  });
+
   // --- Editable name ---
   nameLabel.addEventListener("dblclick", (e) => {
     nameLabel.contentEditable = "true";
@@ -344,6 +410,9 @@ export function createSoundboard(x: number, y: number): CanvasItem {
     if (!nameLabel.textContent?.trim()) {
       nameLabel.textContent = `Sound ${soundCounter}`;
     }
+
+    // Persist name change
+    persistence.updateSoundboardName(id, nameLabel.textContent || `Sound ${soundCounter}`);
   });
 
   nameLabel.addEventListener("keydown", (e) => {
@@ -353,5 +422,22 @@ export function createSoundboard(x: number, y: number): CanvasItem {
     }
   });
 
-  return { id, type: "soundboard", x, y, element: wrapper };
+  // --- Cleanup function ---
+  function cleanup() {
+    if (unsubscribe) unsubscribe();
+    if (hotkey) releaseHotkey(hotkey);
+  }
+
+  // --- Public API for loading audio (called during restoration) ---
+  function loadAudioBuffer(buffer: AudioBuffer | null) {
+    audioBuffer = buffer;
+    reversedCache = null;
+    if (audioBuffer) {
+      setState_internal("has-audio");
+    } else {
+      setState_internal("empty");
+    }
+  }
+
+  return { id, type: "soundboard", x, y, element: wrapper, cleanup, loadAudioBuffer };
 }
