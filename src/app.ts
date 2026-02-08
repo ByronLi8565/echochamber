@@ -9,7 +9,7 @@ import {
 } from "./items.ts";
 import { hotkeyRegistry } from "./soundboard.ts";
 import { persistence } from "./persistence.ts";
-import { loadAudio } from "./audio-storage.ts";
+import { loadAudio, setAudioStorageRoom } from "./audio-storage.ts";
 import { startSync, isConnected } from "./sync.ts";
 import { initDeployModal } from "./deploy-modal.ts";
 import {
@@ -137,6 +137,7 @@ async function initializeApp() {
   // Check if we're joining a room — if so, discard local state so the
   // DO's doc becomes the single source of truth (no merge with stale local data).
   const roomCode = getRoomCodeFromURL();
+  setAudioStorageRoom(roomCode);
   if (roomCode) {
     persistence.resetForRoom();
   }

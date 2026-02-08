@@ -1,6 +1,7 @@
 import { persistence } from "./persistence.ts";
 import { startSync } from "./sync.ts";
 import { setAudioSyncRoom, uploadAllExistingAudio } from "./audio-sync.ts";
+import { setAudioStorageRoom } from "./audio-storage.ts";
 
 export function initDeployModal(currentRoomCode: string | null): void {
   const btnDeploy = document.getElementById("btn-deploy")!;
@@ -48,6 +49,9 @@ export function initDeployModal(currentRoomCode: string | null): void {
         btnDeploy.textContent = "Uploading audio...";
         await uploadAllExistingAudio(doc.audioFiles);
       }
+
+      // Switch IndexedDB namespace to this room for future local loads/saves.
+      setAudioStorageRoom(roomCode);
 
       // Update URL without reload
       history.pushState(null, "", `/${roomCode}`);
