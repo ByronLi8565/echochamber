@@ -115,13 +115,13 @@ export function createSoundboard(
   reRecordBtn.type = "button";
   reRecordBtn.className = "soundboard-action soundboard-action-rerecord";
   reRecordBtn.title = "Re-record";
-  reRecordBtn.textContent = "R";
+  reRecordBtn.textContent = "↺";
 
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
   deleteBtn.className = "soundboard-action soundboard-action-delete";
   deleteBtn.title = "Delete";
-  deleteBtn.textContent = "X";
+  deleteBtn.textContent = "✕";
 
   actionRow.appendChild(reRecordBtn);
   actionRow.appendChild(deleteBtn);

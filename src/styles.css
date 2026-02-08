@@ -276,10 +276,13 @@ body {
 
 .soundboard-actions {
     position: absolute;
-    left: 8px;
-    bottom: 8px;
+    left: -12px;
+    top: 50%;
+    transform: translateY(-50%);
     display: flex;
-    gap: 4px;
+    flex-direction: column;
+    gap: 5px;
+    z-index: 2;
 }
 
 .soundboard-action {
@@ -289,7 +292,7 @@ body {
     border: 1px solid var(--border-primary);
     background: var(--bg-surface);
     color: var(--text-secondary);
-    font-size: 10px;
+    font-size: 12px;
     font-weight: 700;
     line-height: 1;
     cursor: pointer;

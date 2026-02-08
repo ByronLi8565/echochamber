@@ -151,11 +151,12 @@ export default {
       const code = generateRoomCode();
       const id = env.ROOM.idFromName(code);
       const stub = env.ROOM.get(id);
+      const initBytes = await request.arrayBuffer();
 
       // Forward the doc bytes to the DO to initialize
       const initRequest = new Request("https://room/init", {
         method: "POST",
-        body: request.body,
+        body: initBytes,
       });
       const initResponse = await stub.fetch(initRequest);
       if (!initResponse.ok) {
