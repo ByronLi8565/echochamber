@@ -78,7 +78,16 @@ export function createItem(
         ? {
             name: (item as any).name || "",
             hotkey: (item as any).hotkey || "",
-            filters: { lowpass: 0, highpass: 0, reverb: 0, reversed: 0 },
+            filters: {
+              slowIntensity: 0,
+              reverbIntensity: 0,
+              speedIntensity: 0,
+              reversed: 0,
+              loopEnabled: 0,
+              loopDelaySeconds: 0,
+              repeatCount: 1,
+              repeatDelaySeconds: 0,
+            },
           }
         : { text: "Click to edit" }),
     } as any);

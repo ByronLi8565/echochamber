@@ -34,10 +34,17 @@ interface SoundboardItemData {
   name: string;
   hotkey: string;
   filters: {
-    lowpass: number;
-    highpass: number;
-    reverb: number;
+    slowIntensity: number;
+    reverbIntensity: number;
+    speedIntensity: number;
     reversed: number;
+    loopEnabled: number;
+    loopDelaySeconds: number;
+    repeatCount: number;
+    repeatDelaySeconds: number;
+    lowpass?: number; // Legacy (migrated to slowIntensity)
+    highpass?: number; // Legacy (migrated to speedIntensity)
+    reverb?: number; // Legacy (migrated to reverbIntensity)
   };
 }
 
@@ -176,6 +183,31 @@ class Persistence {
       mutableDoc.theme = { itemColors: {} };
     } else if (!mutableDoc.theme.itemColors) {
       mutableDoc.theme.itemColors = {};
+    }
+
+    for (const item of Object.values(mutableDoc.items)) {
+      if (!item || item.type !== "soundboard") continue;
+      const rawFilters = item.filters as Record<string, unknown> | undefined;
+      const lowpass = Number(rawFilters?.lowpass ?? 0);
+      const highpass = Number(rawFilters?.highpass ?? 0);
+      const legacyReverb = Number(rawFilters?.reverb ?? 0);
+      const reversed = Number(rawFilters?.reversed ?? 0);
+
+      const readNumber = (key: string, fallback: number): number => {
+        const value = Number(rawFilters?.[key]);
+        return Number.isFinite(value) ? value : fallback;
+      };
+
+      item.filters = {
+        slowIntensity: readNumber("slowIntensity", lowpass > 0 ? 1 : 0),
+        reverbIntensity: readNumber("reverbIntensity", legacyReverb > 0 ? 1 : 0),
+        speedIntensity: readNumber("speedIntensity", highpass > 0 ? 1 : 0),
+        reversed: reversed > 0 ? 1 : 0,
+        loopEnabled: readNumber("loopEnabled", 0) > 0 ? 1 : 0,
+        loopDelaySeconds: Math.max(0, readNumber("loopDelaySeconds", 0)),
+        repeatCount: Math.max(1, Math.round(readNumber("repeatCount", 1))),
+        repeatDelaySeconds: Math.max(0, readNumber("repeatDelaySeconds", 0)),
+      };
     }
   }
 

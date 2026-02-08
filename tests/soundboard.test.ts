@@ -122,7 +122,7 @@ test.describe('EchoChamber Soundboard', () => {
     expect(hotkeyText).toMatch(/^[1-9A-Z]$/);
   });
 
-  test('soundboard has filter bubbles', async ({ page }) => {
+  test('soundboard has settings bubble and panel controls', async ({ page }) => {
     await page.goto('/');
 
     const container = page.locator('#canvas-container');
@@ -131,17 +131,23 @@ test.describe('EchoChamber Soundboard', () => {
     await page.click('#btn-add-sound');
     await container.click({ position: { x: 200, y: 200 } });
 
-    // Check that filter bubbles are present
+    // Check that settings bubble is present
     const soundboard = page.locator('.soundboard-wrapper').first();
-    const filterBubbles = soundboard.locator('.prop-filter');
+    const settingsBubble = soundboard.locator('.prop-settings');
+    await expect(settingsBubble).toBeVisible();
 
-    await expect(filterBubbles).toHaveCount(4); // Sl, Rv, Re, Nc
+    await settingsBubble.click();
 
-    // Verify filter labels
-    await expect(filterBubbles.nth(0)).toHaveText('Sl'); // Slowed
-    await expect(filterBubbles.nth(1)).toHaveText('Rv'); // Reverb
-    await expect(filterBubbles.nth(2)).toHaveText('Re'); // Reversed
-    await expect(filterBubbles.nth(3)).toHaveText('Nc'); // Nightcore
+    const panel = soundboard.locator('.soundboard-settings-panel');
+    await expect(panel).toHaveClass(/visible/);
+    await expect(panel.locator('input[data-setting="slowIntensity"]')).toBeVisible();
+    await expect(panel.locator('input[data-setting="reverbIntensity"]')).toBeVisible();
+    await expect(panel.locator('input[data-setting="speedIntensity"]')).toBeVisible();
+    await expect(panel.locator('input[data-setting="reversed"]')).toBeVisible();
+    await expect(panel.locator('input[data-setting="loopEnabled"]')).toBeVisible();
+    await expect(panel.locator('input[data-setting="loopDelaySeconds"]')).toBeVisible();
+    await expect(panel.locator('input[data-setting="repeatCount"]')).toBeVisible();
+    await expect(panel.locator('input[data-setting="repeatDelaySeconds"]')).toBeVisible();
   });
 
   test('can toggle placement mode on/off', async ({ page }) => {

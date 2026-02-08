@@ -75,10 +75,18 @@ type SoundState = "empty" | "recording" | "has-audio";
 let soundCounter = 0;
 
 interface FilterSet {
-  slowed: boolean;
-  reverb: boolean;
+  slowIntensity: number;
+  reverbIntensity: number;
+  speedIntensity: number;
   reversed: boolean;
-  nightcore: boolean;
+  loopEnabled: boolean;
+  loopDelaySeconds: number;
+  repeatCount: number;
+  repeatDelaySeconds: number;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function parseCssColorToRgb(
@@ -230,31 +238,63 @@ export function createSoundboard(
   hotkeyBubble.className = "prop-bubble prop-hotkey";
   hotkeyBubble.title = "Hotkey (click to change)";
 
+  const settingsBubble = document.createElement("button");
+  settingsBubble.type = "button";
+  settingsBubble.className = "prop-bubble prop-settings";
+  settingsBubble.title = "Sound settings";
+  settingsBubble.textContent = "⚙";
+
   const filters: FilterSet = {
-    slowed: false,
-    reverb: false,
+    slowIntensity: 0,
+    reverbIntensity: 0,
+    speedIntensity: 0,
     reversed: false,
-    nightcore: false,
+    loopEnabled: false,
+    loopDelaySeconds: 0,
+    repeatCount: 1,
+    repeatDelaySeconds: 0,
   };
-  const filterDefs: { key: keyof FilterSet; label: string; title: string }[] = [
-    { key: "slowed", label: "Sl", title: "Slowed (0.75x)" },
-    { key: "reverb", label: "Rv", title: "Reverb" },
-    { key: "reversed", label: "Re", title: "Reversed" },
-    { key: "nightcore", label: "Nc", title: "Nightcore (1.35x + pitch)" },
-  ];
 
   propsCol.appendChild(hotkeyBubble);
+  propsCol.appendChild(settingsBubble);
 
-  const filterBubbles: HTMLElement[] = [];
-  for (const def of filterDefs) {
-    const fb = document.createElement("div");
-    fb.className = "prop-bubble prop-filter";
-    fb.dataset.filter = def.key;
-    fb.textContent = def.label;
-    fb.title = def.title;
-    propsCol.appendChild(fb);
-    filterBubbles.push(fb);
-  }
+  const settingsPanel = document.createElement("div");
+  settingsPanel.className = "soundboard-settings-panel";
+  settingsPanel.innerHTML = `
+    <div class="soundboard-settings-title">Bubble settings</div>
+    <label class="soundboard-setting-row">
+      <span>Slow intensity</span>
+      <input type="range" min="0" max="1" step="0.05" data-setting="slowIntensity" />
+    </label>
+    <label class="soundboard-setting-row">
+      <span>Reverb intensity</span>
+      <input type="range" min="0" max="1" step="0.05" data-setting="reverbIntensity" />
+    </label>
+    <label class="soundboard-setting-row">
+      <span>Speed intensity</span>
+      <input type="range" min="0" max="1" step="0.05" data-setting="speedIntensity" />
+    </label>
+    <label class="soundboard-setting-row checkbox">
+      <input type="checkbox" data-setting="reversed" />
+      <span>Reversed sound</span>
+    </label>
+    <label class="soundboard-setting-row checkbox">
+      <input type="checkbox" data-setting="loopEnabled" />
+      <span>Loop infinitely</span>
+    </label>
+    <label class="soundboard-setting-row loop-delay">
+      <span>Loop delay (seconds)</span>
+      <input type="range" min="0" max="5" step="0.1" data-setting="loopDelaySeconds" />
+    </label>
+    <label class="soundboard-setting-row">
+      <span>Repeat count</span>
+      <input type="range" min="1" max="10" step="1" data-setting="repeatCount" />
+    </label>
+    <label class="soundboard-setting-row repeat-delay">
+      <span>Repeat delay (seconds)</span>
+      <input type="range" min="0" max="5" step="0.1" data-setting="repeatDelaySeconds" />
+    </label>
+  `;
 
   // Editable name label
   const nameLabel = document.createElement("div");
@@ -267,6 +307,7 @@ export function createSoundboard(
   topRow.appendChild(mainCol);
   topRow.appendChild(propsCol);
   wrapper.appendChild(topRow);
+  wrapper.appendChild(settingsPanel);
 
   // --- State ---
   let state: SoundState = "empty";
@@ -278,6 +319,84 @@ export function createSoundboard(
   let unsubscribe: (() => void) | null = null;
 
   hotkeyBubble.textContent = hotkey || "—";
+
+  const slowIntensityInput = settingsPanel.querySelector(
+    'input[data-setting="slowIntensity"]',
+  ) as HTMLInputElement;
+  const reverbIntensityInput = settingsPanel.querySelector(
+    'input[data-setting="reverbIntensity"]',
+  ) as HTMLInputElement;
+  const speedIntensityInput = settingsPanel.querySelector(
+    'input[data-setting="speedIntensity"]',
+  ) as HTMLInputElement;
+  const reversedInput = settingsPanel.querySelector(
+    'input[data-setting="reversed"]',
+  ) as HTMLInputElement;
+  const loopEnabledInput = settingsPanel.querySelector(
+    'input[data-setting="loopEnabled"]',
+  ) as HTMLInputElement;
+  const loopDelayInput = settingsPanel.querySelector(
+    'input[data-setting="loopDelaySeconds"]',
+  ) as HTMLInputElement;
+  const repeatCountInput = settingsPanel.querySelector(
+    'input[data-setting="repeatCount"]',
+  ) as HTMLInputElement;
+  const repeatDelayInput = settingsPanel.querySelector(
+    'input[data-setting="repeatDelaySeconds"]',
+  ) as HTMLInputElement;
+  const loopDelayRow = settingsPanel.querySelector(
+    ".soundboard-setting-row.loop-delay",
+  ) as HTMLElement;
+  const playbackTimers = new Set<number>();
+  let loopingTimerId: number | null = null;
+
+  function clearPlaybackTimers(): void {
+    for (const timerId of playbackTimers) clearTimeout(timerId);
+    playbackTimers.clear();
+    if (loopingTimerId !== null) {
+      clearTimeout(loopingTimerId);
+      loopingTimerId = null;
+    }
+  }
+
+  function toggleSettingsPanel(nextVisible?: boolean): void {
+    const shouldShow =
+      typeof nextVisible === "boolean"
+        ? nextVisible
+        : !settingsPanel.classList.contains("visible");
+    settingsPanel.classList.toggle("visible", shouldShow);
+    settingsBubble.classList.toggle("active", shouldShow);
+  }
+
+  function updateSettingsControlState(): void {
+    loopDelayInput.disabled = !filters.loopEnabled;
+    loopDelayRow.classList.toggle("disabled", !filters.loopEnabled);
+  }
+
+  function syncSettingsInputsFromState(): void {
+    slowIntensityInput.value = String(filters.slowIntensity);
+    reverbIntensityInput.value = String(filters.reverbIntensity);
+    speedIntensityInput.value = String(filters.speedIntensity);
+    reversedInput.checked = filters.reversed;
+    loopEnabledInput.checked = filters.loopEnabled;
+    loopDelayInput.value = String(filters.loopDelaySeconds);
+    repeatCountInput.value = String(filters.repeatCount);
+    repeatDelayInput.value = String(filters.repeatDelaySeconds);
+    updateSettingsControlState();
+  }
+
+  function persistSettings(): void {
+    persistence.updateSoundboardFilters(id, {
+      slowIntensity: filters.slowIntensity,
+      reverbIntensity: filters.reverbIntensity,
+      speedIntensity: filters.speedIntensity,
+      reversed: filters.reversed ? 1 : 0,
+      loopEnabled: filters.loopEnabled ? 1 : 0,
+      loopDelaySeconds: filters.loopDelaySeconds,
+      repeatCount: filters.repeatCount,
+      repeatDelaySeconds: filters.repeatDelaySeconds,
+    });
+  }
 
   function setState_internal(newState: SoundState) {
     bubble.classList.remove(`state-${state}`);
@@ -359,36 +478,80 @@ export function createSoundboard(
     if (!audioBuffer) return;
 
     const ctx = getAudioContext();
-    let buffer = audioBuffer;
+    const snapshot: FilterSet = { ...filters };
 
-    if (filters.reversed) {
-      if (!reversedCache) reversedCache = reverseBuffer(ctx, audioBuffer);
-      buffer = reversedCache;
+    function playOnce(): number {
+      let buffer = audioBuffer!;
+      if (snapshot.reversed) {
+        if (!reversedCache) reversedCache = reverseBuffer(ctx, audioBuffer!);
+        buffer = reversedCache;
+      }
+
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+
+      const slowRate = 1 - 0.45 * clamp(snapshot.slowIntensity, 0, 1);
+      const speedRate = 1 + 0.75 * clamp(snapshot.speedIntensity, 0, 1);
+      const rate = clamp(slowRate * speedRate, 0.2, 3);
+      source.playbackRate.value = rate;
+
+      const reverbMix = clamp(snapshot.reverbIntensity, 0, 1);
+      if (reverbMix > 0) {
+        const dryGain = ctx.createGain();
+        const wetGain = ctx.createGain();
+        const convolver = ctx.createConvolver();
+        convolver.buffer = getReverbImpulse(ctx);
+        dryGain.gain.value = 1 - reverbMix * 0.85;
+        wetGain.gain.value = reverbMix;
+        source.connect(dryGain);
+        source.connect(convolver);
+        convolver.connect(wetGain);
+        dryGain.connect(ctx.destination);
+        wetGain.connect(ctx.destination);
+      } else {
+        source.connect(ctx.destination);
+      }
+
+      source.start();
+      bubble.classList.add("pulse-play");
+      setTimeout(() => bubble.classList.remove("pulse-play"), 200);
+      return (buffer.duration / rate) * 1000;
     }
 
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
+    const slowRate = 1 - 0.45 * clamp(snapshot.slowIntensity, 0, 1);
+    const speedRate = 1 + 0.75 * clamp(snapshot.speedIntensity, 0, 1);
+    const estimatedRate = clamp(slowRate * speedRate, 0.2, 3);
+    const estimatedDurationMs = (audioBuffer.duration / estimatedRate) * 1000;
 
-    let rate = 1;
-    if (filters.slowed) rate *= 0.75;
-    if (filters.nightcore) rate *= 1.35;
-    source.playbackRate.value = rate;
+    clearPlaybackTimers();
+    const repeatCount = Math.max(1, Math.round(snapshot.repeatCount));
+    const repeatDelayMs = Math.max(0, snapshot.repeatDelaySeconds * 1000);
+    const playSequence = (): number => {
+      playOnce();
+      for (let i = 1; i < repeatCount; i++) {
+        const nextDelayMs = i * (estimatedDurationMs + repeatDelayMs);
+        const timerId = window.setTimeout(() => {
+          playbackTimers.delete(timerId);
+          playOnce();
+        }, nextDelayMs);
+        playbackTimers.add(timerId);
+      }
+      return repeatCount * estimatedDurationMs + (repeatCount - 1) * repeatDelayMs;
+    };
 
-    let node: AudioNode = source;
+    const sequenceDurationMs = playSequence();
 
-    if (filters.reverb) {
-      const convolver = ctx.createConvolver();
-      convolver.buffer = getReverbImpulse(ctx);
-      node.connect(convolver);
-      node = convolver;
+    if (snapshot.loopEnabled) {
+      const scheduleLoop = () => {
+        const loopDelayMs = Math.max(0, snapshot.loopDelaySeconds * 1000);
+        const duration = playSequence();
+        loopingTimerId = window.setTimeout(scheduleLoop, duration + loopDelayMs);
+      };
+      loopingTimerId = window.setTimeout(
+        scheduleLoop,
+        sequenceDurationMs + snapshot.loopDelaySeconds * 1000,
+      );
     }
-
-    node.connect(ctx.destination);
-    source.start();
-
-    // Brief visual pulse
-    bubble.classList.add("pulse-play");
-    setTimeout(() => bubble.classList.remove("pulse-play"), 200);
 
     if (!fromRemote) {
       sendAudioPlayEvent(id);
@@ -436,30 +599,66 @@ export function createSoundboard(
     removeItem(id);
   });
 
-  // --- Filter toggle clicks ---
-  for (let i = 0; i < filterDefs.length; i++) {
-    const def = filterDefs[i]!;
-    const fb = filterBubbles[i]!;
+  // --- Settings bubble + panel ---
+  settingsBubble.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (consumeDrag(wrapper)) return;
+    toggleSettingsPanel();
+  });
 
-    fb.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (consumeDrag(wrapper)) return;
+  settingsPanel.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+  });
 
-      filters[def.key] = !filters[def.key];
-      fb.classList.toggle("active", filters[def.key]);
+  const onGlobalPointerDown = (e: PointerEvent) => {
+    if (!settingsPanel.classList.contains("visible")) return;
+    const target = e.target as Node | null;
+    if (!target) return;
+    if (
+      !settingsPanel.contains(target) &&
+      !settingsBubble.contains(target)
+    ) {
+      toggleSettingsPanel(false);
+    }
+  };
+  document.addEventListener("pointerdown", onGlobalPointerDown);
 
-      // Invalidate reversed cache when reversed toggle changes
-      if (def.key === "reversed") reversedCache = null;
-
-      // Persist filter changes
-      persistence.updateSoundboardFilters(id, {
-        lowpass: filters.slowed ? 1 : 0,
-        highpass: filters.nightcore ? 1 : 0,
-        reverb: filters.reverb ? 1 : 0,
-        reversed: filters.reversed ? 1 : 0,
-      });
-    });
-  }
+  slowIntensityInput.addEventListener("input", () => {
+    filters.slowIntensity = clamp(Number(slowIntensityInput.value), 0, 1);
+    persistSettings();
+  });
+  reverbIntensityInput.addEventListener("input", () => {
+    filters.reverbIntensity = clamp(Number(reverbIntensityInput.value), 0, 1);
+    persistSettings();
+  });
+  speedIntensityInput.addEventListener("input", () => {
+    filters.speedIntensity = clamp(Number(speedIntensityInput.value), 0, 1);
+    persistSettings();
+  });
+  reversedInput.addEventListener("change", () => {
+    filters.reversed = reversedInput.checked;
+    reversedCache = null;
+    persistSettings();
+  });
+  loopEnabledInput.addEventListener("change", () => {
+    filters.loopEnabled = loopEnabledInput.checked;
+    if (!filters.loopEnabled) clearPlaybackTimers();
+    updateSettingsControlState();
+    persistSettings();
+  });
+  loopDelayInput.addEventListener("input", () => {
+    filters.loopDelaySeconds = Math.max(0, Number(loopDelayInput.value));
+    persistSettings();
+  });
+  repeatCountInput.addEventListener("input", () => {
+    filters.repeatCount = Math.max(1, Math.round(Number(repeatCountInput.value)));
+    persistSettings();
+  });
+  repeatDelayInput.addEventListener("input", () => {
+    filters.repeatDelaySeconds = Math.max(0, Number(repeatDelayInput.value));
+    persistSettings();
+  });
+  syncSettingsInputsFromState();
 
   // --- Hotkey bubble: click to reassign ---
   let listeningForHotkey = false;
@@ -517,25 +716,41 @@ export function createSoundboard(
   unsubscribe = persistence.subscribeToItem(id, (itemData) => {
     if (!itemData || itemData.type !== "soundboard") return;
 
-    // Update filters
+    // Update settings/filters
     const newFilters: FilterSet = {
-      slowed: itemData.filters.lowpass > 0,
-      reverb: itemData.filters.reverb > 0,
-      reversed: itemData.filters.reversed > 0,
-      nightcore: itemData.filters.highpass > 0,
+      slowIntensity: clamp(
+        Number(itemData.filters.slowIntensity ?? itemData.filters.lowpass ?? 0),
+        0,
+        1,
+      ),
+      reverbIntensity: clamp(
+        Number(itemData.filters.reverbIntensity ?? itemData.filters.reverb ?? 0),
+        0,
+        1,
+      ),
+      speedIntensity: clamp(
+        Number(itemData.filters.speedIntensity ?? itemData.filters.highpass ?? 0),
+        0,
+        1,
+      ),
+      reversed: Number(itemData.filters.reversed ?? 0) > 0,
+      loopEnabled: Number(itemData.filters.loopEnabled ?? 0) > 0,
+      loopDelaySeconds: Math.max(0, Number(itemData.filters.loopDelaySeconds ?? 0)),
+      repeatCount: Math.max(1, Math.round(Number(itemData.filters.repeatCount ?? 1))),
+      repeatDelaySeconds: Math.max(
+        0,
+        Number(itemData.filters.repeatDelaySeconds ?? 0),
+      ),
     };
 
-    // Only update if changed
+    const wasReversed = filters.reversed;
     if (JSON.stringify(filters) !== JSON.stringify(newFilters)) {
       Object.assign(filters, newFilters);
-      for (let i = 0; i < filterDefs.length; i++) {
-        const def = filterDefs[i]!;
-        const fb = filterBubbles[i]!;
-        fb.classList.toggle("active", filters[def.key]);
-      }
-      if (filters.reversed !== newFilters.reversed) {
+      if (wasReversed !== newFilters.reversed) {
         reversedCache = null;
       }
+      if (!newFilters.loopEnabled) clearPlaybackTimers();
+      syncSettingsInputsFromState();
     }
 
     // Update hotkey
@@ -594,6 +809,9 @@ export function createSoundboard(
   function cleanup() {
     if (unsubscribe) unsubscribe();
     if (hotkey) releaseHotkey(hotkey);
+    clearPlaybackTimers();
+    stopListening();
+    document.removeEventListener("pointerdown", onGlobalPointerDown);
   }
 
   // --- Public API for loading audio (called during restoration) ---

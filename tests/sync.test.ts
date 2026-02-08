@@ -100,7 +100,7 @@ test.describe("Sync", () => {
     }
   });
 
-  test("syncs soundboard name and filters between peers", async ({
+  test("syncs soundboard name and settings between peers", async ({
     page,
     browser,
   }) => {
@@ -134,20 +134,18 @@ test.describe("Sync", () => {
         "Peer rename",
       );
 
-      const hostReverbFilter = page
-        .locator(".soundboard-wrapper")
-        .first()
-        .locator(".prop-filter")
-        .nth(1);
-      await hostReverbFilter.click();
+      const hostBoard = page.locator(".soundboard-wrapper").first();
+      await hostBoard.locator(".prop-settings").click();
+      await hostBoard
+        .locator('.soundboard-settings-panel input[data-setting="reversed"]')
+        .check();
 
       await expect(
         peerPage
           .locator(".soundboard-wrapper")
           .first()
-          .locator(".prop-filter")
-          .nth(1),
-      ).toHaveClass(/active/);
+          .locator('.soundboard-settings-panel input[data-setting="reversed"]'),
+      ).toBeChecked();
     } finally {
       await peerContext.close().catch(() => {});
     }

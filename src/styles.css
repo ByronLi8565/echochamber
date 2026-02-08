@@ -196,6 +196,7 @@ body {
     flex-direction: column;
     align-items: center;
     gap: 8px;
+    position: relative;
 }
 
 .soundboard-top {
@@ -393,35 +394,68 @@ body {
     }
 }
 
-/* Filter bubbles active state */
-.prop-filter.active {
+.prop-settings {
+    font-size: 14px;
+}
+
+.prop-settings.active {
     border-color: var(--state-cyan);
-    background: var(--state-cyan-bg);
     color: var(--state-cyan);
+    background: var(--state-cyan-bg);
 }
 
-.prop-filter[data-filter="slowed"].active {
-    border-color: var(--state-purple);
-    background: var(--state-purple-bg);
-    color: var(--state-purple);
+.soundboard-settings-panel {
+    position: absolute;
+    top: -2px;
+    left: 150px;
+    width: 220px;
+    padding: 10px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-primary);
+    border-radius: 10px;
+    box-shadow: 0 8px 18px var(--shadow-lg);
+    display: none;
+    z-index: 20;
 }
 
-.prop-filter[data-filter="reverb"].active {
-    border-color: var(--state-green);
-    background: var(--state-green-bg);
-    color: var(--state-green);
+.soundboard-settings-panel.visible {
+    display: block;
 }
 
-.prop-filter[data-filter="reversed"].active {
-    border-color: var(--state-orange);
-    background: var(--state-orange-bg);
-    color: var(--state-orange);
+.soundboard-settings-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
 }
 
-.prop-filter[data-filter="nightcore"].active {
-    border-color: var(--state-pink);
-    background: var(--state-pink-bg);
-    color: var(--state-pink);
+.soundboard-setting-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 7px;
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.soundboard-setting-row.checkbox {
+    flex-direction: row;
+    align-items: center;
+    gap: 7px;
+}
+
+.soundboard-setting-row input[type="range"] {
+    width: 100%;
+}
+
+.soundboard-setting-row input[type="checkbox"] {
+    margin: 0;
+}
+
+.soundboard-setting-row.disabled {
+    opacity: 0.45;
 }
 
 /* Editable name label */
@@ -699,6 +733,11 @@ body.hide-prop-bubbles .soundboard-props {
 }
 
 body.hide-prop-bubbles .soundboard-actions {
+    visibility: hidden;
+    pointer-events: none;
+}
+
+body.hide-prop-bubbles .soundboard-settings-panel {
     visibility: hidden;
     pointer-events: none;
 }
