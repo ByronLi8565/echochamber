@@ -118,12 +118,12 @@ async function initializeApp() {
 
   const doc = persistence.getDoc();
 
-  // Restore viewport
-  restoreViewport(doc.viewport.offsetX, doc.viewport.offsetY);
+  // Restore viewport (may be undefined after resetForRoom with Automerge.init)
+  restoreViewport(doc.viewport?.offsetX ?? 0, doc.viewport?.offsetY ?? 0);
 
   // Recreate all items from local doc (empty when joining a room)
   const audioContext = new AudioContext();
-  for (const [itemId, itemData] of Object.entries(doc.items)) {
+  for (const [itemId, itemData] of Object.entries(doc.items ?? {})) {
     const item = createItem(itemData.type, itemData.x, itemData.y, itemId);
 
     // For soundboards, load audio buffer (transient state, not in Automerge)

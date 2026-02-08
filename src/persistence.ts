@@ -190,23 +190,12 @@ class Persistence {
     this.syncEnabled = true;
   }
 
-  // Reset to a fresh empty doc. Used when joining a room so the DO's doc
-  // becomes the sole source of truth (no merging with stale local state).
+  // Reset to a truly empty doc. Used when joining a room so the DO's doc
+  // becomes the sole source of truth. Using Automerge.init() (instead of
+  // Automerge.from) ensures ZERO local change history — nothing gets merged
+  // into the server's doc when sync begins.
   resetForRoom(): void {
-    this.doc = Automerge.from({
-      metadata: {
-        version: VERSION,
-        createdAt: Date.now(),
-        lastModified: Date.now(),
-      },
-      viewport: {
-        offsetX: 0,
-        offsetY: 0,
-      },
-      items: {},
-      nextItemId: 0,
-      audioFiles: {},
-    });
+    this.doc = Automerge.init<EchoChamberDoc>();
   }
 
   getDocBytes(): Uint8Array {
@@ -214,13 +203,13 @@ class Persistence {
   }
 
   applyRemoteDoc(newDoc: Doc<EchoChamberDoc>): void {
-    console.log(`[Persistence] Applying remote doc with ${Object.keys(newDoc.items).length} items`);
-    console.log(`[Persistence] Remote doc items:`, Object.keys(newDoc.items));
+    console.log(`[Persistence] Applying remote doc with ${Object.keys(newDoc.items ?? {}).length} items`);
+    console.log(`[Persistence] Remote doc items:`, Object.keys(newDoc.items ?? {}));
 
     // Preserve local viewport offsets — each client has its own view
     const localViewport = {
-      offsetX: this.doc.viewport.offsetX,
-      offsetY: this.doc.viewport.offsetY,
+      offsetX: this.doc.viewport?.offsetX ?? 0,
+      offsetY: this.doc.viewport?.offsetY ?? 0,
     };
 
     this.doc = newDoc;
