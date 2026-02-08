@@ -1,9 +1,10 @@
 import type { CanvasItem } from "./items.ts";
-import { generateId } from "./items.ts";
+import { generateId, removeItem } from "./items.ts";
 import { consumeDrag } from "./drag.ts";
 import { persistence } from "./persistence.ts";
 import { saveAudio, deleteAudio } from "./audio-storage.ts";
 import { uploadAudio } from "./audio-sync.ts";
+import { sendAudioPlayEvent } from "./sync.ts";
 
 // --- Shared audio infrastructure ---
 
@@ -107,8 +108,27 @@ export function createSoundboard(
   const statusLabel = document.createElement("div");
   statusLabel.className = "soundboard-status";
 
+  const actionRow = document.createElement("div");
+  actionRow.className = "soundboard-actions";
+
+  const reRecordBtn = document.createElement("button");
+  reRecordBtn.type = "button";
+  reRecordBtn.className = "soundboard-action soundboard-action-rerecord";
+  reRecordBtn.title = "Re-record";
+  reRecordBtn.textContent = "R";
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "soundboard-action soundboard-action-delete";
+  deleteBtn.title = "Delete";
+  deleteBtn.textContent = "X";
+
+  actionRow.appendChild(reRecordBtn);
+  actionRow.appendChild(deleteBtn);
+
   bubble.appendChild(icon);
   bubble.appendChild(statusLabel);
+  bubble.appendChild(actionRow);
 
   // Property bubbles column
   const propsCol = document.createElement("div");
@@ -240,7 +260,7 @@ export function createSoundboard(
   }
 
   // --- Playback (async, overlapping) ---
-  function playSound() {
+  function playSound(fromRemote: boolean = false) {
     if (!audioBuffer) return;
 
     const ctx = getAudioContext();
@@ -274,6 +294,10 @@ export function createSoundboard(
     // Brief visual pulse
     bubble.classList.add("pulse-play");
     setTimeout(() => bubble.classList.remove("pulse-play"), 200);
+
+    if (!fromRemote) {
+      sendAudioPlayEvent(id);
+    }
   }
 
   // --- Click handler on main bubble ---
@@ -296,6 +320,19 @@ export function createSoundboard(
         playSound();
         break;
     }
+  });
+
+  reRecordBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (consumeDrag(wrapper)) return;
+    if (state === "recording") return;
+    startRecording();
+  });
+
+  deleteBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (consumeDrag(wrapper)) return;
+    removeItem(id);
   });
 
   // --- Filter toggle clicks ---
@@ -477,6 +514,7 @@ export function createSoundboard(
     element: wrapper,
     cleanup,
     loadAudioBuffer,
+    play: (fromRemote?: boolean) => playSound(Boolean(fromRemote)),
     hotkey,
     name: nameLabel.textContent || "",
   };

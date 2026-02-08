@@ -9,6 +9,7 @@ interface SyncConfig {
   onConnected?: () => void;
   onDisconnected?: () => void;
   onConnectionCount?: (count: number) => void;
+  onRemoteAudioPlay?: (itemId: string) => void;
 }
 
 interface DestructiveIntentMessage {
@@ -19,6 +20,11 @@ interface DestructiveIntentMessage {
   expiresAt: number;
 }
 
+interface AudioPlayMessage {
+  type: "audioPlay";
+  itemId: string;
+}
+
 let ws: WebSocket | null = null;
 let syncState: SyncState = Automerge.initSyncState();
 let config: SyncConfig | null = null;
@@ -27,6 +33,7 @@ let connected = false;
 let hasReceivedFirstSync = false;
 let isJoiningRoom = false;
 let reconnectAttempts = 0;
+let syncAudioEnabled = false;
 
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 30000;
@@ -61,6 +68,22 @@ export function stopSync(): void {
 
 export function isConnected(): boolean {
   return connected;
+}
+
+export function setSyncAudioEnabled(enabled: boolean): void {
+  syncAudioEnabled = enabled;
+}
+
+export function sendAudioPlayEvent(itemId: string): void {
+  if (!syncAudioEnabled) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  const message: AudioPlayMessage = {
+    type: "audioPlay",
+    itemId,
+  };
+
+  ws.send(JSON.stringify(message));
 }
 
 export function updateConnectionCount(count: number): void {
@@ -160,20 +183,34 @@ function connect(): void {
         pipe(
           Effect.try({
             try: () =>
-              JSON.parse(event.data) as { type?: string; count?: unknown },
+              JSON.parse(event.data) as {
+                type?: string;
+                count?: unknown;
+                itemId?: unknown;
+              },
             catch: (error) => error,
           }),
           Effect.flatMap((json) => {
             const count = json.count;
-            if (json.type !== "connectionCount" || typeof count !== "number") {
-              return Effect.void;
+            if (json.type === "connectionCount" && typeof count === "number") {
+              return Effect.sync(() => {
+                console.log(`[Sync] Connection count: ${count}`);
+                updateConnectionCount(count);
+                config?.onConnectionCount?.(count);
+              });
             }
 
-            return Effect.sync(() => {
-              console.log(`[Sync] Connection count: ${count}`);
-              updateConnectionCount(count);
-              config?.onConnectionCount?.(count);
-            });
+            if (
+              json.type === "audioPlay" &&
+              typeof json.itemId === "string" &&
+              syncAudioEnabled
+            ) {
+              return Effect.sync(() => {
+                config?.onRemoteAudioPlay?.(json.itemId as string);
+              });
+            }
+
+            return Effect.void;
           }),
           Effect.catchAll((error) =>
             Effect.sync(() => {

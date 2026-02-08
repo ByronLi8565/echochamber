@@ -12,6 +12,7 @@ export interface CanvasItem {
   element: HTMLElement;
   cleanup?: () => void;
   loadAudioBuffer?: (buffer: AudioBuffer | null) => void; // For soundboard restoration
+  play?: (fromRemote?: boolean) => void;
   hotkey?: string;
   name?: string;
 }

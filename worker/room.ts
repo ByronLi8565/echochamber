@@ -10,6 +10,11 @@ interface DeleteIntent {
   expiresAt: number;
 }
 
+interface AudioPlayControlMessage {
+  type: "audioPlay";
+  itemId: string;
+}
+
 export class Room implements DurableObject {
   private state: DurableObjectState;
   private doc: Automerge.Doc<any> | null = null;
@@ -193,6 +198,9 @@ export class Room implements DurableObject {
       };
 
       if (message.type !== "destructiveIntent") {
+        if (message.type === "audioPlay" && typeof message.itemId === "string") {
+          this.broadcastAudioPlay(ws, message.itemId);
+        }
         return;
       }
 
@@ -283,6 +291,23 @@ export class Room implements DurableObject {
     this.syncStates.set(ws, updatedSyncState);
     if (replyMsg) {
       ws.send(replyMsg as unknown as ArrayBuffer);
+    }
+  }
+
+  private broadcastAudioPlay(sender: WebSocket, itemId: string): void {
+    const message: AudioPlayControlMessage = {
+      type: "audioPlay",
+      itemId,
+    };
+    const encoded = JSON.stringify(message);
+
+    for (const peer of this.state.getWebSockets()) {
+      if (peer === sender) continue;
+      try {
+        peer.send(encoded);
+      } catch (error) {
+        console.error("[Room] Failed to send audioPlay:", error);
+      }
     }
   }
 
