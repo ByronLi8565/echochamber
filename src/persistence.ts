@@ -20,6 +20,11 @@ const VIEWPORT_STORAGE_KEY = "echochamber-viewport";
 const SAVE_DEBOUNCE_MS = 500;
 const VERSION = "1.0.0";
 
+interface ThemeData {
+  backgroundColor?: string;
+  itemColors: { [itemId: string]: string };
+}
+
 interface SoundboardItemData {
   type: "soundboard";
   x: number;
@@ -56,6 +61,7 @@ interface EchoChamberDoc {
   items: { [itemId: string]: SoundboardItemData | TextboxItemData };
   nextItemId: number;
   audioFiles: { [itemId: string]: string };
+  theme: ThemeData;
 }
 
 interface ViewportState {
@@ -68,12 +74,14 @@ type SubscriptionCallback = (doc: EchoChamberDoc) => void;
 type ItemSubscriptionCallback = (
   itemData: SoundboardItemData | TextboxItemData | null,
 ) => void;
+type ThemeSubscriptionCallback = (theme: ThemeData) => void;
 
 class Persistence {
   private doc: Automerge.Doc<EchoChamberDoc>;
   private saveTimeout: number | null = null;
   private globalSubscribers = new Set<SubscriptionCallback>();
   private itemSubscribers = new Map<string, Set<ItemSubscriptionCallback>>();
+  private themeSubscribers = new Set<ThemeSubscriptionCallback>();
   private isNotifying = false;
   private notifyTimeout: number | null = null;
   private syncEnabled = false;
@@ -118,6 +126,7 @@ class Persistence {
       items: {},
       nextItemId: 0,
       audioFiles: {},
+      theme: { itemColors: {} },
     };
   }
 
@@ -144,6 +153,7 @@ class Persistence {
       items?: EchoChamberDoc["items"];
       nextItemId?: number;
       audioFiles?: EchoChamberDoc["audioFiles"];
+      theme?: EchoChamberDoc["theme"];
     };
     const now = Date.now();
 
@@ -162,6 +172,11 @@ class Persistence {
     if (!mutableDoc.items) mutableDoc.items = {};
     if (typeof mutableDoc.nextItemId !== "number") mutableDoc.nextItemId = 0;
     if (!mutableDoc.audioFiles) mutableDoc.audioFiles = {};
+    if (!mutableDoc.theme) {
+      mutableDoc.theme = { itemColors: {} };
+    } else if (!mutableDoc.theme.itemColors) {
+      mutableDoc.theme.itemColors = {};
+    }
   }
 
   private loadViewport(): ViewportState {
@@ -254,6 +269,13 @@ class Persistence {
     };
   }
 
+  // Subscribe to theme changes
+  subscribeToTheme(callback: ThemeSubscriptionCallback): () => void {
+    this.themeSubscribers.add(callback);
+    callback(this.doc.theme ?? { itemColors: {} });
+    return () => this.themeSubscribers.delete(callback);
+  }
+
   // Debounced notification
   private scheduleNotify(): void {
     if (this.isNotifying) return;
@@ -278,6 +300,11 @@ class Persistence {
         for (const callback of callbacks) {
           callback(itemData);
         }
+      }
+      // Notify theme subscribers
+      const theme = this.doc.theme ?? { itemColors: {} };
+      for (const callback of this.themeSubscribers) {
+        callback(theme);
       }
     } finally {
       this.isNotifying = false;
@@ -401,6 +428,24 @@ class Persistence {
     });
   }
 
+  updateBackgroundColor(color: string): void {
+    this.change((doc) => {
+      doc.theme.backgroundColor = color;
+    });
+  }
+
+  updateItemColor(itemId: string, color: string): void {
+    this.change((doc) => {
+      doc.theme.itemColors[itemId] = color;
+    });
+  }
+
+  clearItemColor(itemId: string): void {
+    this.change((doc) => {
+      delete doc.theme.itemColors[itemId];
+    });
+  }
+
   updateViewport(offsetX: number, offsetY: number): void {
     this.changeLocal(() => {
       this.viewport = { offsetX, offsetY };
@@ -439,6 +484,9 @@ class Persistence {
       }
       delete doc.items[itemId];
       delete doc.audioFiles[itemId];
+      if (doc.theme?.itemColors?.[itemId]) {
+        delete doc.theme.itemColors[itemId];
+      }
     });
 
     // Side effect: delete from IndexedDB
@@ -597,4 +645,4 @@ class Persistence {
 }
 
 export const persistence = new Persistence();
-export type { SoundboardItemData, TextboxItemData };
+export type { SoundboardItemData, TextboxItemData, ThemeData };

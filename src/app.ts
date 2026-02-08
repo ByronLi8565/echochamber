@@ -17,6 +17,17 @@ import {
   markAudioKeyKnown,
   checkForNewAudioKeys,
 } from "./audio-sync.ts";
+import {
+  initColorBucket,
+  exitPaintMode,
+  onPaintModeChange,
+} from "./color-bucket.ts";
+import {
+  initSettings,
+  isSyncColorsEnabled,
+  onSyncColorsChange,
+} from "./settings.ts";
+import type { ThemeData } from "./persistence.ts";
 
 const container = document.getElementById("canvas-container")!;
 const btnAddSound = document.getElementById("btn-add-sound")!;
@@ -29,6 +40,7 @@ const btnImport = document.getElementById("btn-import")!;
 let placementMode: CanvasItem["type"] | null = null;
 
 function setPlacementMode(type: CanvasItem["type"] | null) {
+  if (type !== null) exitPaintMode();
   console.log(`[PlacementMode] Changed from "${placementMode}" to "${type}"`);
   placementMode = type;
   btnAddSound.classList.toggle("active", type === "soundboard");
@@ -103,6 +115,71 @@ document.addEventListener("keydown", (e) => {
     handler();
   }
 });
+
+// --- Paint mode / placement mode mutual exclusion ---
+
+onPaintModeChange((active) => {
+  if (active && placementMode !== null) {
+    setPlacementMode(null);
+  }
+});
+
+// --- Theme rendering ---
+
+function applyItemColor(itemId: string, color: string): void {
+  const item = itemRegistry.get(itemId);
+  if (!item) return;
+  const bubble = item.element.querySelector(
+    ".soundboard-bubble",
+  ) as HTMLElement | null;
+  if (bubble) {
+    bubble.style.background = color;
+    bubble.style.borderColor = color;
+  }
+}
+
+function clearItemColor(itemId: string): void {
+  const item = itemRegistry.get(itemId);
+  if (!item) return;
+  const bubble = item.element.querySelector(
+    ".soundboard-bubble",
+  ) as HTMLElement | null;
+  if (bubble) {
+    bubble.style.background = "";
+    bubble.style.borderColor = "";
+  }
+}
+
+function applyThemeToUI(theme: ThemeData): void {
+  if (!isSyncColorsEnabled()) return;
+
+  if (theme.backgroundColor) {
+    document.body.style.background = theme.backgroundColor;
+    container.style.background = theme.backgroundColor;
+  } else {
+    document.body.style.background = "";
+    container.style.background = "";
+  }
+
+  for (const [itemId, color] of Object.entries(theme.itemColors ?? {})) {
+    applyItemColor(itemId, color);
+  }
+
+  // Clear colors for items not in theme
+  for (const [itemId] of itemRegistry) {
+    if (!theme.itemColors?.[itemId]) {
+      clearItemColor(itemId);
+    }
+  }
+}
+
+function clearAllThemeRendering(): void {
+  document.body.style.background = "";
+  container.style.background = "";
+  for (const [itemId] of itemRegistry) {
+    clearItemColor(itemId);
+  }
+}
 
 // --- Room code parsing ---
 
@@ -207,6 +284,14 @@ async function initializeApp() {
             `[Sync] Creating remote item ${itemId} (${itemData.type})`,
           );
           createItem(itemData.type, itemData.x, itemData.y, itemId);
+
+          // Apply theme color to newly created remote item
+          if (isSyncColorsEnabled()) {
+            const color = doc.theme?.itemColors?.[itemId];
+            if (color) {
+              queueMicrotask(() => applyItemColor(itemId, color));
+            }
+          }
         }
       }
 
@@ -246,7 +331,33 @@ async function initializeApp() {
   // --- Deploy modal ---
   initDeployModal(roomCode);
 
+  // --- Settings & color bucket ---
+  initSettings();
+  initColorBucket(!!roomCode);
+
+  // Subscribe to theme changes
+  persistence.subscribeToTheme((theme) => {
+    if (isSyncColorsEnabled()) {
+      applyThemeToUI(theme);
+    }
+  });
+
+  // Handle sync colors toggle
+  onSyncColorsChange((enabled) => {
+    if (enabled) {
+      const doc = persistence.getDoc();
+      applyThemeToUI(doc.theme ?? { itemColors: {} });
+    } else {
+      clearAllThemeRendering();
+    }
+  });
+
   console.log("[App] Initialization complete");
+
+  // Initialize Feather icons
+  if (typeof (window as any).feather !== "undefined") {
+    (window as any).feather.replace();
+  }
 }
 
 // --- Export/Import ---

@@ -90,6 +90,20 @@ export function notifyLocalChange(): void {
   }
 }
 
+export function forceResync(): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !config) return;
+
+  // Reset sync state so the server treats us as a fresh peer
+  syncState = Automerge.initSyncState();
+
+  const doc = config.getDoc();
+  const [newSyncState, msg] = Automerge.generateSyncMessage(doc, syncState);
+  syncState = newSyncState;
+  if (msg) {
+    ws.send(msg as unknown as ArrayBuffer);
+  }
+}
+
 export function requestDeleteIntent(itemId: string): string | null {
   if (!ws || ws.readyState !== WebSocket.OPEN) return null;
 
