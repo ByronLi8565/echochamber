@@ -21,3 +21,5 @@ I want state to be persisted, using Automerge as a CRDT library.
 Let's tackle this step by step. First off, I want all info in a soundboard (all sounds, their hotkeys, selected filters, labels) to be stored in an Automerge document. 
 Sounds probably have to be stored as their own files and then file paths put onto the document as an immutable string?
 Then I want this to persist to localstorage, with an option to download the soundboard as a (zip file? some easily portable thing) and load a downloaded file.
+
+Ok now I want to deploy this to Cloudflare Workers and Durable Objects. Roughly how this should work is that there should be a little

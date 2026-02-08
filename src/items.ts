@@ -50,7 +50,7 @@ export function createItem(type: CanvasItem["type"], x: number, y: number, exist
       width: rect.width,
       height: rect.height,
       ...(type === "soundboard"
-        ? { name: "", hotkey: "", filters: { lowpass: 0, highpass: 0, reverb: 0, reversed: 0 } }
+        ? { name: "", hotkey: (item as any).hotkey || "", filters: { lowpass: 0, highpass: 0, reverb: 0, reversed: 0 } }
         : { text: "Click to edit" }),
     } as any);
     console.log(`[Items] Item ${item.id} persisted to storage`);

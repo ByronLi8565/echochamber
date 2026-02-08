@@ -439,5 +439,5 @@ export function createSoundboard(x: number, y: number, existingId?: string): Can
     }
   }
 
-  return { id, type: "soundboard", x, y, element: wrapper, cleanup, loadAudioBuffer };
+  return { id, type: "soundboard" as const, x, y, element: wrapper, cleanup, loadAudioBuffer, hotkey };
 }

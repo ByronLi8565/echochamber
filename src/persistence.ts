@@ -70,8 +70,12 @@ class Persistence {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       try {
-        const bytes = Buffer.from(stored, "base64");
-        return Automerge.load(new Uint8Array(bytes));
+        const binaryString = atob(stored);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        return Automerge.load(bytes);
       } catch (error) {
         console.error("Failed to load saved document:", error);
       }
@@ -108,7 +112,11 @@ class Persistence {
   private saveDoc(): void {
     try {
       const bytes = Automerge.save(this.doc);
-      const base64 = Buffer.from(bytes).toString("base64");
+      let binaryString = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binaryString += String.fromCharCode(bytes[i]);
+      }
+      const base64 = btoa(binaryString);
       localStorage.setItem(STORAGE_KEY, base64);
     } catch (error) {
       console.error("Failed to save document:", error);
