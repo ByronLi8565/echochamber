@@ -10,7 +10,7 @@ import {
 import { hotkeyRegistry } from "./soundboard.ts";
 import { persistence } from "./persistence.ts";
 import { loadAudio } from "./audio-storage.ts";
-import { startSync, isConnected } from "./sync.ts";
+import { startSync, setSyncAudioEnabled } from "./sync.ts";
 import { initDeployModal } from "./deploy-modal.ts";
 import {
   setAudioSyncRoom,
@@ -23,6 +23,49 @@ const btnAddSound = document.getElementById("btn-add-sound")!;
 const btnAddText = document.getElementById("btn-add-text")!;
 const btnExport = document.getElementById("btn-export")!;
 const btnImport = document.getElementById("btn-import")!;
+const settingsMenu = document.getElementById("settings-menu");
+const settingsToggle = document.getElementById("settings-toggle");
+const settingsPanel = document.getElementById("settings-panel");
+const syncAudioToggle = document.getElementById(
+  "toggle-sync-audio",
+) as HTMLInputElement | null;
+
+const SYNC_AUDIO_STORAGE_KEY = "echochamber-sync-audio-enabled";
+
+function readSyncAudioSetting(): boolean {
+  return localStorage.getItem(SYNC_AUDIO_STORAGE_KEY) === "1";
+}
+
+function applySyncAudioSetting(enabled: boolean): void {
+  setSyncAudioEnabled(enabled);
+  if (syncAudioToggle) {
+    syncAudioToggle.checked = enabled;
+  }
+  localStorage.setItem(SYNC_AUDIO_STORAGE_KEY, enabled ? "1" : "0");
+}
+
+function initSettingsMenu(): void {
+  const initialSyncAudio = readSyncAudioSetting();
+  applySyncAudioSetting(initialSyncAudio);
+
+  settingsToggle?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    settingsPanel?.classList.toggle("hidden");
+  });
+
+  syncAudioToggle?.addEventListener("change", () => {
+    applySyncAudioSetting(syncAudioToggle.checked);
+  });
+
+  document.addEventListener("pointerdown", (e) => {
+    if (!settingsMenu) return;
+    if (settingsPanel?.classList.contains("hidden")) return;
+    const target = e.target as Node | null;
+    if (target && !settingsMenu.contains(target)) {
+      settingsPanel.classList.add("hidden");
+    }
+  });
+}
 
 // --- Placement mode ---
 
@@ -131,6 +174,8 @@ function updateConnectionStatus(connected: boolean) {
 // --- App initialization ---
 
 async function initializeApp() {
+  initSettingsMenu();
+
   // Enable persistence ID generation
   setUsePersistenceId(true);
 
@@ -232,6 +277,10 @@ async function initializeApp() {
         roomCode,
         getDoc: () => persistence.getDoc(),
         applyRemoteDoc: (newDoc) => persistence.applyRemoteDoc(newDoc),
+        onRemoteAudioPlay: (itemId) => {
+          const item = itemRegistry.get(itemId);
+          item?.play?.(true);
+        },
         onConnected: () => updateConnectionStatus(true),
         onDisconnected: () => updateConnectionStatus(false),
       },

@@ -28,6 +28,9 @@ test.describe('EchoChamber Soundboard', () => {
 
     // canvas-world exists but has 0x0 size (infinite canvas design)
     await expect(page.locator('#canvas-world')).toBeAttached();
+
+    // Settings menu entrypoint is present
+    await expect(page.locator('#settings-toggle')).toBeVisible();
   });
 
   test('creates a sound button when Add Sound is clicked and canvas is clicked', async ({ page }) => {
@@ -158,5 +161,48 @@ test.describe('EchoChamber Soundboard', () => {
     expect(btnClasses).not.toContain('active');
     containerClasses = await container.getAttribute('class');
     expect(containerClasses).not.toContain('placing');
+  });
+
+  test('soundboard has delete and re-record controls, and delete removes the item', async ({ page }) => {
+    await page.goto('/');
+
+    const container = page.locator('#canvas-container');
+    await page.click('#btn-add-sound');
+    await container.click({ position: { x: 220, y: 220 } });
+
+    const soundboard = page.locator('.soundboard-wrapper').first();
+    const reRecordButton = soundboard.locator('.soundboard-action-rerecord');
+    const deleteButton = soundboard.locator('.soundboard-action-delete');
+
+    await expect(reRecordButton).toBeVisible();
+    await expect(deleteButton).toBeVisible();
+
+    await reRecordButton.click();
+    await expect(soundboard.locator('.soundboard-bubble')).toBeVisible();
+
+    await deleteButton.click();
+    await expect(page.locator('.soundboard-wrapper')).toHaveCount(0);
+  });
+
+  test('settings menu toggles and sync audio can be changed', async ({ page }) => {
+    await page.goto('/');
+
+    const gearButton = page.locator('#settings-toggle');
+    const panel = page.locator('#settings-panel');
+    const syncAudioToggle = page.locator('#toggle-sync-audio');
+
+    await expect(panel).toHaveClass(/hidden/);
+
+    await gearButton.click();
+    await expect(panel).not.toHaveClass(/hidden/);
+
+    await expect(syncAudioToggle).not.toBeChecked();
+    await syncAudioToggle.check();
+    await expect(syncAudioToggle).toBeChecked();
+    await syncAudioToggle.uncheck();
+    await expect(syncAudioToggle).not.toBeChecked();
+
+    await gearButton.click();
+    await expect(panel).toHaveClass(/hidden/);
   });
 });
