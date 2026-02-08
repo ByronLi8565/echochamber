@@ -1,5 +1,5 @@
 import type { CanvasItem } from "./items.ts";
-import { generateId, removeItem } from "./items.ts";
+import { duplicateItem, generateId, removeItem } from "./items.ts";
 import { consumeDrag } from "./drag.ts";
 import { persistence } from "./persistence.ts";
 import { saveAudio, deleteAudio } from "./audio-storage.ts";
@@ -81,6 +81,88 @@ interface FilterSet {
   nightcore: boolean;
 }
 
+function parseCssColorToRgb(
+  color: string,
+): { r: number; g: number; b: number } | null {
+  const hexMatch = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hexMatch) {
+    const hex = hexMatch[1]!;
+    if (hex.length === 3) {
+      return {
+        r: parseInt(hex[0]! + hex[0]!, 16),
+        g: parseInt(hex[1]! + hex[1]!, 16),
+        b: parseInt(hex[2]! + hex[2]!, 16),
+      };
+    }
+    return {
+      r: parseInt(hex.slice(0, 2), 16),
+      g: parseInt(hex.slice(2, 4), 16),
+      b: parseInt(hex.slice(4, 6), 16),
+    };
+  }
+
+  const rgbMatch = color
+    .trim()
+    .match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+  if (!rgbMatch) return null;
+
+  return {
+    r: Math.max(0, Math.min(255, Number(rgbMatch[1]))),
+    g: Math.max(0, Math.min(255, Number(rgbMatch[2]))),
+    b: Math.max(0, Math.min(255, Number(rgbMatch[3]))),
+  };
+}
+
+function relativeLuminance({ r, g, b }: { r: number; g: number; b: number }): number {
+  const toLinear = (channel: number): number => {
+    const srgb = channel / 255;
+    return srgb <= 0.04045
+      ? srgb / 12.92
+      : Math.pow((srgb + 0.055) / 1.055, 2.4);
+  };
+
+  const rl = toLinear(r);
+  const gl = toLinear(g);
+  const bl = toLinear(b);
+  return 0.2126 * rl + 0.7152 * gl + 0.0722 * bl;
+}
+
+export function getReadableTextColor(backgroundColor: string): string | null {
+  const rgb = parseCssColorToRgb(backgroundColor);
+  if (!rgb) return null;
+
+  const luminance = relativeLuminance(rgb);
+  const whiteContrast = 1.05 / (luminance + 0.05);
+  const blackContrast = (luminance + 0.05) / 0.05;
+
+  return whiteContrast >= blackContrast ? "#ffffff" : "#000000";
+}
+
+export function updateSoundboardAdaptiveTextColor(): void {
+  const wrappers = document.querySelectorAll(".soundboard-wrapper");
+  const canvasContainer = document.getElementById("canvas-container");
+  const labelBackground = canvasContainer
+    ? getComputedStyle(canvasContainer).backgroundColor
+    : getComputedStyle(document.body).backgroundColor;
+  const labelTextColor = getReadableTextColor(labelBackground);
+
+  for (const wrapper of wrappers) {
+    const bubble = wrapper.querySelector(".soundboard-bubble") as HTMLElement | null;
+    if (bubble) {
+      const bubbleBackground = getComputedStyle(bubble).backgroundColor;
+      const bubbleTextColor = getReadableTextColor(bubbleBackground);
+      if (bubbleTextColor) {
+        bubble.style.color = bubbleTextColor;
+      }
+    }
+
+    const nameLabel = wrapper.querySelector(".soundboard-name") as HTMLElement | null;
+    if (nameLabel && labelTextColor) {
+      nameLabel.style.color = labelTextColor;
+    }
+  }
+}
+
 export function createSoundboard(
   x: number,
   y: number,
@@ -97,6 +179,9 @@ export function createSoundboard(
 
   const topRow = document.createElement("div");
   topRow.className = "soundboard-top";
+
+  const mainCol = document.createElement("div");
+  mainCol.className = "soundboard-main";
 
   // Main bubble
   const bubble = document.createElement("div");
@@ -117,12 +202,19 @@ export function createSoundboard(
   reRecordBtn.title = "Re-record";
   reRecordBtn.textContent = "↺";
 
+  const duplicateBtn = document.createElement("button");
+  duplicateBtn.type = "button";
+  duplicateBtn.className = "soundboard-action soundboard-action-duplicate";
+  duplicateBtn.title = "Duplicate";
+  duplicateBtn.textContent = "⧉";
+
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
   deleteBtn.className = "soundboard-action soundboard-action-delete";
   deleteBtn.title = "Delete";
   deleteBtn.textContent = "✕";
 
+  actionRow.appendChild(duplicateBtn);
   actionRow.appendChild(reRecordBtn);
   actionRow.appendChild(deleteBtn);
 
@@ -164,17 +256,17 @@ export function createSoundboard(
     filterBubbles.push(fb);
   }
 
-  topRow.appendChild(bubble);
-  topRow.appendChild(propsCol);
-
   // Editable name label
   const nameLabel = document.createElement("div");
   nameLabel.className = "soundboard-name";
   nameLabel.contentEditable = "false";
   nameLabel.textContent = `Sound ${soundCounter}`;
 
+  mainCol.appendChild(bubble);
+  mainCol.appendChild(nameLabel);
+  topRow.appendChild(mainCol);
+  topRow.appendChild(propsCol);
   wrapper.appendChild(topRow);
-  wrapper.appendChild(nameLabel);
 
   // --- State ---
   let state: SoundState = "empty";
@@ -206,9 +298,12 @@ export function createSoundboard(
         statusLabel.textContent = "Play";
         break;
     }
+
+    updateSoundboardAdaptiveTextColor();
   }
 
   setState_internal("empty");
+  queueMicrotask(() => updateSoundboardAdaptiveTextColor());
 
   // --- Recording ---
   async function startRecording() {
@@ -327,6 +422,12 @@ export function createSoundboard(
     if (consumeDrag(wrapper)) return;
     if (state === "recording") return;
     startRecording();
+  });
+
+  duplicateBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (consumeDrag(wrapper)) return;
+    void duplicateItem(id);
   });
 
   deleteBtn.addEventListener("click", (e) => {

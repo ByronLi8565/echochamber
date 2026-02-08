@@ -9,6 +9,7 @@ interface Env {
 }
 
 const MAX_AUDIO_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_ROOM_CODE_ATTEMPTS = 12;
 const ROOM_CODE_SEGMENT = "(?:[a-z0-9]{8}|[a-z]{3,10}-[a-z]{3,10}-[a-z]{3,10})";
 const WS_PATH_RE = new RegExp(`^/ws/(${ROOM_CODE_SEGMENT})$`);
 const AUDIO_PATH_RE = new RegExp(
@@ -148,22 +149,48 @@ export default {
 
     // POST /api/rooms — create a new room
     if (url.pathname === "/api/rooms" && request.method === "POST") {
-      const code = generateRoomCode();
-      const id = env.ROOM.idFromName(code);
-      const stub = env.ROOM.get(id);
       const initBytes = await request.arrayBuffer();
+      for (let attempt = 0; attempt < MAX_ROOM_CODE_ATTEMPTS; attempt++) {
+        const code = generateRoomCode();
+        const id = env.ROOM.idFromName(code);
+        const stub = env.ROOM.get(id);
 
-      // Forward the doc bytes to the DO to initialize
-      const initRequest = new Request("https://room/init", {
-        method: "POST",
-        body: initBytes,
-      });
-      const initResponse = await stub.fetch(initRequest);
-      if (!initResponse.ok) {
-        return new Response("Failed to initialize room", { status: 500 });
+        const existsResponse = await stub.fetch("https://room/exists");
+        if (!existsResponse.ok) {
+          console.error(
+            `[Room] Failed to check existence for ${code}: ${existsResponse.status}`,
+          );
+          continue;
+        }
+
+        const { exists } = (await existsResponse.json()) as {
+          exists?: unknown;
+        };
+        if (exists === true) {
+          continue;
+        }
+
+        // Forward the doc bytes to the DO to initialize
+        const initRequest = new Request("https://room/init", {
+          method: "POST",
+          body: initBytes,
+        });
+        const initResponse = await stub.fetch(initRequest);
+        if (initResponse.status === 409) {
+          continue;
+        }
+        if (!initResponse.ok) {
+          console.error(
+            `[Room] Failed to initialize room ${code}: ${initResponse.status}`,
+          );
+          continue;
+        }
+
+        return Response.json({ roomCode: code });
       }
-
-      return Response.json({ roomCode: code });
+      return new Response("Failed to allocate unique room code", {
+        status: 503,
+      });
     }
 
     // GET /ws/<code> — WebSocket upgrade to Durable Object

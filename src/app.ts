@@ -1,5 +1,11 @@
 import "./canvas.ts";
-import { screenToWorld, isPanningNow, restoreViewport } from "./canvas.ts";
+import {
+  screenToWorld,
+  isPanningNow,
+  restoreViewport,
+  zoomIn,
+  zoomOut,
+} from "./canvas.ts";
 import {
   createItem,
   removeItem,
@@ -7,10 +13,14 @@ import {
   setUsePersistenceId,
   type CanvasItem,
 } from "./items.ts";
-import { hotkeyRegistry } from "./soundboard.ts";
+import {
+  getReadableTextColor,
+  hotkeyRegistry,
+  updateSoundboardAdaptiveTextColor,
+} from "./soundboard.ts";
 import { persistence } from "./persistence.ts";
 import { loadAudio, setAudioStorageRoom } from "./audio-storage.ts";
-import { startSync, setSyncAudioEnabled } from "./sync.ts";
+import { startSync } from "./sync.ts";
 import { initDeployModal } from "./deploy-modal.ts";
 import {
   setAudioSyncRoom,
@@ -34,49 +44,8 @@ const btnAddSound = document.getElementById("btn-add-sound")!;
 const btnAddText = document.getElementById("btn-add-text")!;
 const btnExport = document.getElementById("btn-export")!;
 const btnImport = document.getElementById("btn-import")!;
-const settingsMenu = document.getElementById("settings-menu");
-const settingsToggle = document.getElementById("settings-toggle");
-const settingsPanel = document.getElementById("settings-panel");
-const syncAudioToggle = document.getElementById(
-  "toggle-sync-audio",
-) as HTMLInputElement | null;
-
-const SYNC_AUDIO_STORAGE_KEY = "echochamber-sync-audio-enabled";
-
-function readSyncAudioSetting(): boolean {
-  return localStorage.getItem(SYNC_AUDIO_STORAGE_KEY) === "1";
-}
-
-function applySyncAudioSetting(enabled: boolean): void {
-  setSyncAudioEnabled(enabled);
-  if (syncAudioToggle) {
-    syncAudioToggle.checked = enabled;
-  }
-  localStorage.setItem(SYNC_AUDIO_STORAGE_KEY, enabled ? "1" : "0");
-}
-
-function initSettingsMenu(): void {
-  const initialSyncAudio = readSyncAudioSetting();
-  applySyncAudioSetting(initialSyncAudio);
-
-  settingsToggle?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    settingsPanel?.classList.toggle("hidden");
-  });
-
-  syncAudioToggle?.addEventListener("change", () => {
-    applySyncAudioSetting(syncAudioToggle.checked);
-  });
-
-  document.addEventListener("pointerdown", (e) => {
-    if (!settingsMenu) return;
-    if (settingsPanel?.classList.contains("hidden")) return;
-    const target = e.target as Node | null;
-    if (target && !settingsMenu.contains(target)) {
-      settingsPanel.classList.add("hidden");
-    }
-  });
-}
+const btnZoomIn = document.getElementById("btn-zoom-in");
+const btnZoomOut = document.getElementById("btn-zoom-out");
 
 // --- Placement mode ---
 
@@ -99,6 +68,14 @@ btnAddSound.addEventListener("click", () => {
 btnAddText.addEventListener("click", () => {
   console.log("[Button] Add Text button clicked");
   setPlacementMode(placementMode === "textbox" ? null : "textbox");
+});
+
+btnZoomIn?.addEventListener("click", () => {
+  zoomIn();
+});
+
+btnZoomOut?.addEventListener("click", () => {
+  zoomOut();
 });
 
 container.addEventListener("pointerup", (e) => {
@@ -172,25 +149,48 @@ onPaintModeChange((active) => {
 function applyItemColor(itemId: string, color: string): void {
   const item = itemRegistry.get(itemId);
   if (!item) return;
-  const bubble = item.element.querySelector(
+  const wrapper = item.element as HTMLElement;
+  const bubble = wrapper.querySelector(
     ".soundboard-bubble",
   ) as HTMLElement | null;
+  const controls = wrapper.querySelectorAll(
+    ".prop-bubble, .soundboard-action",
+  ) as NodeListOf<HTMLElement>;
+  const controlTextColor = getReadableTextColor(color) ?? "";
+
   if (bubble) {
     bubble.style.background = color;
     bubble.style.borderColor = color;
   }
+  for (const control of controls) {
+    control.style.background = color;
+    control.style.borderColor = color;
+    control.style.color = controlTextColor;
+  }
+  updateSoundboardAdaptiveTextColor();
 }
 
 function clearItemColor(itemId: string): void {
   const item = itemRegistry.get(itemId);
   if (!item) return;
-  const bubble = item.element.querySelector(
+  const wrapper = item.element as HTMLElement;
+  const bubble = wrapper.querySelector(
     ".soundboard-bubble",
   ) as HTMLElement | null;
+  const controls = wrapper.querySelectorAll(
+    ".prop-bubble, .soundboard-action",
+  ) as NodeListOf<HTMLElement>;
+
   if (bubble) {
     bubble.style.background = "";
     bubble.style.borderColor = "";
   }
+  for (const control of controls) {
+    control.style.background = "";
+    control.style.borderColor = "";
+    control.style.color = "";
+  }
+  updateSoundboardAdaptiveTextColor();
 }
 
 function applyThemeToUI(theme: ThemeData): void {
@@ -214,6 +214,8 @@ function applyThemeToUI(theme: ThemeData): void {
       clearItemColor(itemId);
     }
   }
+
+  updateSoundboardAdaptiveTextColor();
 }
 
 function clearAllThemeRendering(): void {
@@ -222,6 +224,7 @@ function clearAllThemeRendering(): void {
   for (const [itemId] of itemRegistry) {
     clearItemColor(itemId);
   }
+  updateSoundboardAdaptiveTextColor();
 }
 
 // --- Room code parsing ---
@@ -251,8 +254,6 @@ function updateConnectionStatus(connected: boolean) {
 // --- App initialization ---
 
 async function initializeApp() {
-  initSettingsMenu();
-
   // Enable persistence ID generation
   setUsePersistenceId(true);
 

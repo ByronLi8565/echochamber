@@ -3,6 +3,8 @@ import { makeDraggable } from "./drag.ts";
 import { createSoundboard } from "./soundboard.ts";
 import { createTextbox } from "./textbox.ts";
 import { persistence } from "./persistence.ts";
+import { loadAudio, saveAudio } from "./audio-storage.ts";
+import { uploadAudio } from "./audio-sync.ts";
 
 export interface CanvasItem {
   id: string;
@@ -101,4 +103,43 @@ export function removeItem(id: string) {
   if (usePersistenceId) {
     persistence.removeItem(id);
   }
+}
+
+export async function duplicateItem(id: string): Promise<CanvasItem | null> {
+  const sourceItem = itemRegistry.get(id);
+  if (!sourceItem) return null;
+
+  const sourceData = persistence.getDoc().items?.[id];
+  if (!sourceData) return null;
+
+  const copy = createItem(sourceItem.type, sourceItem.x + 24, sourceItem.y + 24);
+
+  if (sourceData.type === "soundboard" && copy.type === "soundboard") {
+    persistence.updateSoundboardName(copy.id, `${sourceData.name} Copy`);
+    persistence.updateSoundboardFilters(copy.id, { ...sourceData.filters });
+
+    const sourceColor = persistence.getDoc().theme?.itemColors?.[id];
+    if (sourceColor) {
+      persistence.updateItemColor(copy.id, sourceColor);
+    }
+
+    const sourceAudioKey = persistence.getDoc().audioFiles?.[id];
+    if (sourceAudioKey && copy.loadAudioBuffer) {
+      const audioCtx = new AudioContext();
+      const buffer = await loadAudio(sourceAudioKey, audioCtx);
+      if (buffer) {
+        const newAudioKey = `audio-${copy.id}-${Date.now()}`;
+        await saveAudio(newAudioKey, buffer);
+        persistence.setAudioFile(copy.id, newAudioKey);
+        copy.loadAudioBuffer(buffer);
+        await uploadAudio(copy.id, buffer);
+      }
+    }
+  }
+
+  if (sourceData.type === "textbox" && copy.type === "textbox") {
+    persistence.updateTextboxText(copy.id, sourceData.text);
+  }
+
+  return copy;
 }

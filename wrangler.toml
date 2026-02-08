@@ -1,6 +1,9 @@
 name = "echochamber"
 main = "worker/index.ts"
 compatibility_date = "2025-01-01"
+routes = [
+  { pattern = "echochamber.byronli.net", custom_domain = true }
+]
 
 [assets]
 directory = "./dist"

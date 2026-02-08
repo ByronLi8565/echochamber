@@ -133,6 +133,25 @@ test.describe("Color Bucket", () => {
     // Verify the bubble has the custom background color
     const bubble = page.locator(".soundboard-bubble").first();
     await expect(bubble).toHaveCSS("background-color", "rgb(255, 0, 0)");
+
+    // Prop and action bubbles should follow the same painted color
+    const soundboard = page.locator(".soundboard-wrapper").first();
+    await expect(soundboard.locator(".prop-bubble").first()).toHaveCSS(
+      "background-color",
+      "rgb(255, 0, 0)",
+    );
+    await expect(soundboard.locator(".soundboard-action-duplicate")).toHaveCSS(
+      "background-color",
+      "rgb(255, 0, 0)",
+    );
+    await expect(soundboard.locator(".soundboard-action-rerecord")).toHaveCSS(
+      "background-color",
+      "rgb(255, 0, 0)",
+    );
+    await expect(soundboard.locator(".soundboard-action-delete")).toHaveCSS(
+      "background-color",
+      "rgb(255, 0, 0)",
+    );
   });
 
   test("painting the background changes its color", async ({ page }) => {

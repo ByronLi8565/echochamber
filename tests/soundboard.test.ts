@@ -30,7 +30,9 @@ test.describe('EchoChamber Soundboard', () => {
     await expect(page.locator('#canvas-world')).toBeAttached();
 
     // Settings menu entrypoint is present
-    await expect(page.locator('#settings-toggle')).toBeVisible();
+    await expect(page.locator('#btn-settings')).toBeVisible();
+    await expect(page.locator('#btn-zoom-in')).toBeVisible();
+    await expect(page.locator('#btn-zoom-out')).toBeVisible();
   });
 
   test('creates a sound button when Add Sound is clicked and canvas is clicked', async ({ page }) => {
@@ -163,7 +165,7 @@ test.describe('EchoChamber Soundboard', () => {
     expect(containerClasses).not.toContain('placing');
   });
 
-  test('soundboard has delete and re-record controls, and delete removes the item', async ({ page }) => {
+  test('soundboard has duplicate/delete/re-record controls, duplicate works, and delete removes the original', async ({ page }) => {
     await page.goto('/');
 
     const container = page.locator('#canvas-container');
@@ -171,30 +173,35 @@ test.describe('EchoChamber Soundboard', () => {
     await container.click({ position: { x: 220, y: 220 } });
 
     const soundboard = page.locator('.soundboard-wrapper').first();
+    const duplicateButton = soundboard.locator('.soundboard-action-duplicate');
     const reRecordButton = soundboard.locator('.soundboard-action-rerecord');
     const deleteButton = soundboard.locator('.soundboard-action-delete');
 
+    await expect(duplicateButton).toBeVisible();
     await expect(reRecordButton).toBeVisible();
     await expect(deleteButton).toBeVisible();
+
+    await duplicateButton.click();
+    await expect(page.locator('.soundboard-wrapper')).toHaveCount(2);
 
     await reRecordButton.click();
     await expect(soundboard.locator('.soundboard-bubble')).toBeVisible();
 
     await deleteButton.click();
-    await expect(page.locator('.soundboard-wrapper')).toHaveCount(0);
+    await expect(page.locator('.soundboard-wrapper')).toHaveCount(1);
   });
 
   test('settings menu toggles and sync audio can be changed', async ({ page }) => {
     await page.goto('/');
 
-    const gearButton = page.locator('#settings-toggle');
+    const gearButton = page.locator('#btn-settings');
     const panel = page.locator('#settings-panel');
     const syncAudioToggle = page.locator('#toggle-sync-audio');
 
-    await expect(panel).toHaveClass(/hidden/);
+    await expect(panel).not.toHaveClass(/visible/);
 
     await gearButton.click();
-    await expect(panel).not.toHaveClass(/hidden/);
+    await expect(panel).toHaveClass(/visible/);
 
     await expect(syncAudioToggle).not.toBeChecked();
     await syncAudioToggle.check();
@@ -203,6 +210,6 @@ test.describe('EchoChamber Soundboard', () => {
     await expect(syncAudioToggle).not.toBeChecked();
 
     await gearButton.click();
-    await expect(panel).toHaveClass(/hidden/);
+    await expect(panel).not.toHaveClass(/visible/);
   });
 });

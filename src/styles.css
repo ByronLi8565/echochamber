@@ -204,6 +204,13 @@ body {
     gap: 6px;
 }
 
+.soundboard-main {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
 /* Main bubble */
 .soundboard-bubble {
     width: 130px;
@@ -316,9 +323,14 @@ body {
     background: var(--state-cyan-bg);
 }
 
+.soundboard-action-duplicate:hover {
+    color: var(--state-cyan);
+    background: var(--state-cyan-bg);
+}
+
 .soundboard-action-delete:hover {
-    color: var(--state-red);
-    background: var(--accent-primary-bg);
+    color: var(--state-cyan);
+    background: var(--state-cyan-bg);
 }
 
 /* Property bubbles column */
@@ -416,6 +428,7 @@ body {
 .soundboard-name {
     text-align: center;
     font-size: 13px;
+    margin-left: 2px;
     color: var(--text-secondary);
     padding: 2px 8px;
     border-radius: 4px;
@@ -577,61 +590,6 @@ body {
     color: var(--state-disabled);
 }
 
-/* ===== Settings menu ===== */
-
-#settings-menu {
-    position: fixed;
-    left: 16px;
-    bottom: 16px;
-    z-index: 220;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-}
-
-#settings-toggle {
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    border: 1px solid var(--border-primary);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    font-size: 20px;
-    cursor: pointer;
-    box-shadow: 0 4px 14px var(--shadow-md);
-    transition:
-        transform 0.12s,
-        border-color 0.15s,
-        background 0.15s;
-}
-
-#settings-toggle:hover {
-    transform: rotate(14deg) scale(1.05);
-    border-color: var(--border-focus);
-}
-
-#settings-menu #settings-panel {
-    padding: 10px 12px;
-    border: 1px solid var(--border-primary);
-    border-radius: 10px;
-    background: var(--bg-surface);
-    box-shadow: 0 8px 22px var(--shadow-md);
-    min-width: 160px;
-}
-
-#settings-panel.hidden {
-    display: none;
-}
-
-.settings-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-    color: var(--text-primary);
-}
-
 /* ===== Bottom-left action buttons ===== */
 
 #bottom-left-actions {
@@ -661,12 +619,42 @@ body {
         border-color 0.15s,
         transform 0.1s;
     position: relative;
+    overflow: visible;
 }
 
 #bottom-left-actions button:hover {
     background: var(--bg-hover);
     border-color: var(--border-focus);
     transform: scale(1.05);
+}
+
+#bottom-left-actions button::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 10px);
+    transform: translateX(-50%) translateY(4px);
+    background: var(--bg-input);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    padding: 6px 8px;
+    white-space: nowrap;
+    box-shadow: 0 2px 10px var(--shadow-sm);
+    opacity: 0;
+    pointer-events: none;
+    transition:
+        opacity 0.15s ease,
+        transform 0.15s ease;
+    z-index: 120;
+}
+
+#bottom-left-actions button:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
 }
 
 #bottom-left-actions button.active {
@@ -703,6 +691,20 @@ body.paint-mode .soundboard-bubble {
 body.paint-mode .soundboard-bubble:hover {
     outline: 3px dashed var(--accent-primary);
     outline-offset: 3px;
+}
+
+body.hide-prop-bubbles .soundboard-props {
+    visibility: hidden;
+    pointer-events: none;
+}
+
+body.hide-prop-bubbles .soundboard-actions {
+    visibility: hidden;
+    pointer-events: none;
+}
+
+body.hide-toolbar #toolbar {
+    display: none;
 }
 
 /* ===== Settings panel ===== */
@@ -744,7 +746,7 @@ body.paint-mode .soundboard-bubble:hover {
 .settings-toggle {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 32px;
     cursor: pointer;
     font-size: 13px;
     color: var(--text-secondary);
@@ -758,11 +760,6 @@ body.paint-mode .soundboard-bubble:hover {
 }
 
 @media (max-width: 600px) {
-    #settings-menu {
-        left: 10px;
-        bottom: 10px;
-    }
-
     #bottom-left-actions {
         bottom: 12px;
         left: 12px;

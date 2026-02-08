@@ -6,16 +6,101 @@ import { setAudioStorageRoom } from "./audio-storage.ts";
 export function initDeployModal(currentRoomCode: string | null): void {
   const btnDeploy = document.getElementById("btn-deploy")!;
   const modal = document.getElementById("deploy-modal")!;
+  const modalHeader = modal.querySelector(".modal-header") as HTMLElement | null;
   const modalUrl = document.getElementById(
     "deploy-modal-url",
   ) as HTMLTextAreaElement;
+  const btnRedeploy = document.getElementById(
+    "deploy-modal-redeploy",
+  ) as HTMLButtonElement | null;
   const btnCopy = document.getElementById("deploy-modal-copy")!;
   const btnClose = document.getElementById("deploy-modal-close")!;
 
-  // If already in a room, show "Share" instead of "Deploy"
-  if (currentRoomCode) {
+  const updateModalMode = (): void => {
+    const isShared = !!currentRoomCode;
+    btnDeploy.textContent = isShared ? "Share" : "Deploy";
+    if (modalHeader) {
+      modalHeader.textContent = isShared
+        ? "Share your soundboard"
+        : "Deploy your soundboard";
+    }
+    if (btnRedeploy) {
+      btnRedeploy.style.display = isShared ? "" : "none";
+    }
+  };
+
+  const deployCurrentBoard = async (): Promise<string> => {
+    const payloadBytes = new Uint8Array(persistence.getDocBytes());
+    const payload = new Blob([payloadBytes], {
+      type: "application/octet-stream",
+    });
+    const response = await fetch("/api/rooms", {
+      method: "POST",
+      body: payload,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server returned ${response.status}`);
+    }
+
+    const { roomCode } = (await response.json()) as { roomCode?: unknown };
+    if (typeof roomCode !== "string") {
+      throw new Error("Invalid room creation response");
+    }
+    return roomCode;
+  };
+
+  const activateSharedRoom = async (roomCode: string): Promise<void> => {
+    // Upload all existing audio to R2
+    setAudioSyncRoom(roomCode);
+    const doc = persistence.getDoc();
+    if (Object.keys(doc.audioFiles).length > 0) {
+      btnDeploy.textContent = "Uploading audio...";
+      await uploadAllExistingAudio(doc.audioFiles);
+    }
+
+    // Switch IndexedDB namespace to this room for future local loads/saves.
+    setAudioStorageRoom(roomCode);
+
+    // Update URL without reload
+    history.pushState(null, "", `/${roomCode}`);
+
+    // Enable sync
+    persistence.enableSync();
+    startSync(
+      {
+        roomCode,
+        getDoc: () => persistence.getDoc(),
+        applyRemoteDoc: (newDoc) => persistence.applyRemoteDoc(newDoc),
+        onConnected: () => {
+          const wrapper = document.getElementById("connection-wrapper");
+          const indicator = document.getElementById("connection-status");
+          if (wrapper) wrapper.style.display = "flex";
+          if (indicator) {
+            indicator.classList.add("connected");
+            indicator.classList.remove("disconnected");
+          }
+        },
+        onDisconnected: () => {
+          const indicator = document.getElementById("connection-status");
+          if (indicator) {
+            indicator.classList.remove("connected");
+            indicator.classList.add("disconnected");
+          }
+        },
+      },
+      false,
+    ); // false = deploying (not joining), can send immediately
+
+    currentRoomCode = roomCode;
+    updateModalMode();
     btnDeploy.textContent = "Share";
+
+    const wrapperEl = document.getElementById("connection-wrapper");
+    if (wrapperEl) wrapperEl.style.display = "flex";
   }
+
+  updateModalMode();
 
   btnDeploy.addEventListener("click", async () => {
     if (currentRoomCode) {
@@ -29,66 +114,9 @@ export function initDeployModal(currentRoomCode: string | null): void {
     btnDeploy.setAttribute("disabled", "true");
 
     try {
-      const docBytes = persistence.getDocBytes();
-      const response = await fetch("/api/rooms", {
-        method: "POST",
-        body: docBytes,
-      });
-
-      if (!response.ok) {
-        throw new Error(`Server returned ${response.status}`);
-      }
-
-      const { roomCode } = await response.json();
+      const roomCode = await deployCurrentBoard();
       const shareUrl = `${window.location.origin}/${roomCode}`;
-
-      // Upload all existing audio to R2
-      setAudioSyncRoom(roomCode);
-      const doc = persistence.getDoc();
-      if (Object.keys(doc.audioFiles).length > 0) {
-        btnDeploy.textContent = "Uploading audio...";
-        await uploadAllExistingAudio(doc.audioFiles);
-      }
-
-      // Switch IndexedDB namespace to this room for future local loads/saves.
-      setAudioStorageRoom(roomCode);
-
-      // Update URL without reload
-      history.pushState(null, "", `/${roomCode}`);
-
-      // Enable sync
-      persistence.enableSync();
-      startSync(
-        {
-          roomCode,
-          getDoc: () => persistence.getDoc(),
-          applyRemoteDoc: (newDoc) => persistence.applyRemoteDoc(newDoc),
-          onConnected: () => {
-            const wrapper = document.getElementById("connection-wrapper");
-            const indicator = document.getElementById("connection-status");
-            if (wrapper) wrapper.style.display = "flex";
-            if (indicator) {
-              indicator.classList.add("connected");
-              indicator.classList.remove("disconnected");
-            }
-          },
-          onDisconnected: () => {
-            const indicator = document.getElementById("connection-status");
-            if (indicator) {
-              indicator.classList.remove("connected");
-              indicator.classList.add("disconnected");
-            }
-          },
-        },
-        false,
-      ); // false = deploying (not joining), can send immediately
-
-      // Update button to "Share" for subsequent clicks
-      currentRoomCode = roomCode;
-      btnDeploy.textContent = "Share";
-
-      const wrapperEl = document.getElementById("connection-wrapper");
-      if (wrapperEl) wrapperEl.style.display = "flex";
+      await activateSharedRoom(roomCode);
 
       showModal(shareUrl);
     } catch (error) {
@@ -99,6 +127,34 @@ export function initDeployModal(currentRoomCode: string | null): void {
       btnDeploy.removeAttribute("disabled");
     }
   });
+
+  if (btnRedeploy) {
+    btnRedeploy.addEventListener("click", async () => {
+      if (!currentRoomCode) return;
+      const shouldRedeploy = window.confirm(
+        "Create a fresh shared room from your current board state?",
+      );
+      if (!shouldRedeploy) return;
+
+      const originalText = btnRedeploy.textContent;
+      btnRedeploy.textContent = "Redeploying...";
+      btnRedeploy.setAttribute("disabled", "true");
+      btnDeploy.setAttribute("disabled", "true");
+      try {
+        const roomCode = await deployCurrentBoard();
+        const shareUrl = `${window.location.origin}/${roomCode}`;
+        await activateSharedRoom(roomCode);
+        showModal(shareUrl);
+      } catch (error) {
+        console.error("[Deploy] Redeploy failed:", error);
+        alert("Failed to redeploy soundboard");
+      } finally {
+        btnRedeploy.textContent = originalText ?? "Redeploy";
+        btnRedeploy.removeAttribute("disabled");
+        btnDeploy.removeAttribute("disabled");
+      }
+    });
+  }
 
   let showModal = (url: string) => {
     modalUrl.value = url;

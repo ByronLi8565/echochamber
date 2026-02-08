@@ -2,6 +2,7 @@ import * as Automerge from "@automerge/automerge";
 import type { SyncState, SyncMessage } from "@automerge/automerge";
 
 const DOC_KEY = "doc";
+const CORRUPT_DOC_KEY_PREFIX = "corrupt-doc";
 const INTENT_TTL_MS = 10000;
 
 interface DeleteIntent {
@@ -28,9 +29,33 @@ export class Room implements DurableObject {
   private async loadDoc(): Promise<Automerge.Doc<any>> {
     if (this.doc) return this.doc;
 
-    const stored = await this.state.storage.get<Uint8Array>(DOC_KEY);
+    const stored = await this.state.storage.get<Uint8Array | ArrayBuffer>(
+      DOC_KEY,
+    );
     if (stored) {
-      this.doc = Automerge.load(stored);
+      const bytes =
+        stored instanceof Uint8Array ? stored : new Uint8Array(stored);
+      try {
+        this.doc = Automerge.load(bytes);
+      } catch (error) {
+        console.error(
+          "[Room] Failed to load stored room doc. Resetting room doc to empty.",
+          error,
+        );
+        try {
+          await this.state.storage.put(
+            `${CORRUPT_DOC_KEY_PREFIX}-${Date.now()}`,
+            bytes,
+          );
+        } catch (archiveError) {
+          console.error(
+            "[Room] Failed to archive corrupt room doc bytes:",
+            archiveError,
+          );
+        }
+        this.doc = Automerge.init();
+        await this.saveDoc();
+      }
     } else {
       this.doc = Automerge.init();
     }
@@ -45,11 +70,26 @@ export class Room implements DurableObject {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
+    if (url.pathname === "/exists" && request.method === "GET") {
+      const stored = await this.state.storage.get(DOC_KEY);
+      return Response.json({ exists: !!stored });
+    }
+
     // POST /init — initialize the room with a doc
     if (url.pathname === "/init" && request.method === "POST") {
+      const stored = await this.state.storage.get(DOC_KEY);
+      if (stored) {
+        return new Response("Room already initialized", { status: 409 });
+      }
+
       const bytes = new Uint8Array(await request.arrayBuffer());
       if (bytes.length > 0) {
-        this.doc = Automerge.load(bytes);
+        try {
+          this.doc = Automerge.load(bytes);
+        } catch (error) {
+          console.error("[Room] Invalid init doc bytes:", error);
+          return new Response("Invalid room doc bytes", { status: 400 });
+        }
         await this.saveDoc();
       }
       return new Response("OK", { status: 200 });
