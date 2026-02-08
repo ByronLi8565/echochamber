@@ -5,7 +5,9 @@ import { setAudioSyncRoom, uploadAllExistingAudio } from "./audio-sync.ts";
 export function initDeployModal(currentRoomCode: string | null): void {
   const btnDeploy = document.getElementById("btn-deploy")!;
   const modal = document.getElementById("deploy-modal")!;
-  const modalUrl = document.getElementById("deploy-modal-url") as HTMLInputElement;
+  const modalUrl = document.getElementById(
+    "deploy-modal-url",
+  ) as HTMLTextAreaElement;
   const btnCopy = document.getElementById("deploy-modal-copy")!;
   const btnClose = document.getElementById("deploy-modal-close")!;
 
@@ -52,27 +54,30 @@ export function initDeployModal(currentRoomCode: string | null): void {
 
       // Enable sync
       persistence.enableSync();
-      startSync({
-        roomCode,
-        getDoc: () => persistence.getDoc(),
-        applyRemoteDoc: (newDoc) => persistence.applyRemoteDoc(newDoc),
-        onConnected: () => {
-          const wrapper = document.getElementById("connection-wrapper");
-          const indicator = document.getElementById("connection-status");
-          if (wrapper) wrapper.style.display = "flex";
-          if (indicator) {
-            indicator.classList.add("connected");
-            indicator.classList.remove("disconnected");
-          }
+      startSync(
+        {
+          roomCode,
+          getDoc: () => persistence.getDoc(),
+          applyRemoteDoc: (newDoc) => persistence.applyRemoteDoc(newDoc),
+          onConnected: () => {
+            const wrapper = document.getElementById("connection-wrapper");
+            const indicator = document.getElementById("connection-status");
+            if (wrapper) wrapper.style.display = "flex";
+            if (indicator) {
+              indicator.classList.add("connected");
+              indicator.classList.remove("disconnected");
+            }
+          },
+          onDisconnected: () => {
+            const indicator = document.getElementById("connection-status");
+            if (indicator) {
+              indicator.classList.remove("connected");
+              indicator.classList.add("disconnected");
+            }
+          },
         },
-        onDisconnected: () => {
-          const indicator = document.getElementById("connection-status");
-          if (indicator) {
-            indicator.classList.remove("connected");
-            indicator.classList.add("disconnected");
-          }
-        },
-      }, false); // false = deploying (not joining), can send immediately
+        false,
+      ); // false = deploying (not joining), can send immediately
 
       // Update button to "Share" for subsequent clicks
       currentRoomCode = roomCode;
@@ -91,14 +96,14 @@ export function initDeployModal(currentRoomCode: string | null): void {
     }
   });
 
-  function showModal(url: string) {
+  let showModal = (url: string) => {
     modalUrl.value = url;
     modal.classList.add("visible");
-  }
+  };
 
-  function hideModal() {
+  const hideModal = () => {
     modal.classList.remove("visible");
-  }
+  };
 
   btnCopy.addEventListener("click", () => {
     modalUrl.select();

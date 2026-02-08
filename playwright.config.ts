@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const devServerPort = 8787;
+const baseURL = `http://127.0.0.1:${devServerPort}`;
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
@@ -9,7 +12,7 @@ export default defineConfig({
   reporter: 'html',
 
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
@@ -21,11 +24,11 @@ export default defineConfig({
     },
   ],
 
-  // Run your dev server before starting the tests
+  // Run wrangler dev before starting tests.
   webServer: {
-    command: 'bun run dev',
-    url: 'http://localhost:3000',
+    command: `bun run build:client && wrangler dev --port ${devServerPort}`,
+    url: baseURL,
     reuseExistingServer: !process.env.CI,
-    timeout: 10_000,
+    timeout: 60_000,
   },
 });

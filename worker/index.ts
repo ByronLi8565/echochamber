@@ -9,15 +9,137 @@ interface Env {
 }
 
 const MAX_AUDIO_SIZE = 10 * 1024 * 1024; // 10MB
+const ROOM_CODE_SEGMENT = "(?:[a-z0-9]{8}|[a-z]{3,10}-[a-z]{3,10}-[a-z]{3,10})";
+const WS_PATH_RE = new RegExp(`^/ws/(${ROOM_CODE_SEGMENT})$`);
+const AUDIO_PATH_RE = new RegExp(
+  `^/api/rooms/(${ROOM_CODE_SEGMENT})/audio/(.+)$`,
+);
+const COMMON_WORDS = [
+  "amber",
+  "anchor",
+  "apple",
+  "apron",
+  "beach",
+  "berry",
+  "blaze",
+  "bloom",
+  "board",
+  "brave",
+  "breeze",
+  "brick",
+  "brook",
+  "cabin",
+  "cedar",
+  "chalk",
+  "charm",
+  "cherry",
+  "cloud",
+  "clover",
+  "coast",
+  "coral",
+  "cotton",
+  "creek",
+  "dawn",
+  "delta",
+  "ember",
+  "fable",
+  "field",
+  "flame",
+  "flora",
+  "forest",
+  "frost",
+  "garden",
+  "gleam",
+  "glen",
+  "globe",
+  "grain",
+  "grand",
+  "grass",
+  "grove",
+  "harbor",
+  "hazel",
+  "heart",
+  "hill",
+  "honey",
+  "ivory",
+  "jade",
+  "jolly",
+  "juniper",
+  "lagoon",
+  "lantern",
+  "lemon",
+  "lilac",
+  "linen",
+  "maple",
+  "meadow",
+  "melon",
+  "mint",
+  "mist",
+  "moon",
+  "moss",
+  "nectar",
+  "olive",
+  "opal",
+  "orbit",
+  "orchard",
+  "pebble",
+  "pine",
+  "planet",
+  "plume",
+  "pond",
+  "prairie",
+  "quartz",
+  "quest",
+  "raven",
+  "river",
+  "robin",
+  "rose",
+  "saddle",
+  "sage",
+  "scale",
+  "shadow",
+  "shore",
+  "silver",
+  "sky",
+  "smoke",
+  "solar",
+  "spark",
+  "spice",
+  "spring",
+  "star",
+  "stone",
+  "stream",
+  "sunset",
+  "surf",
+  "thistle",
+  "timber",
+  "topaz",
+  "trail",
+  "valley",
+  "velvet",
+  "vine",
+  "walnut",
+  "water",
+  "willow",
+  "wind",
+  "wing",
+  "winter",
+  "wood",
+  "wren",
+  "zesty",
+];
 
 function generateRoomCode(): string {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  const values = crypto.getRandomValues(new Uint8Array(8));
-  let code = "";
-  for (const v of values) {
-    code += chars[v % chars.length];
+  const pool = [...COMMON_WORDS];
+  const selected: string[] = [];
+
+  for (let i = 0; i < 3; i++) {
+    const value = crypto.getRandomValues(new Uint32Array(1))[0]!;
+    const index = value % pool.length;
+    selected.push(pool.splice(index, 1)[0]!);
   }
-  return code;
+
+  return selected.join("-");
 }
 
 export default {
@@ -44,7 +166,7 @@ export default {
     }
 
     // GET /ws/<code> — WebSocket upgrade to Durable Object
-    const wsMatch = url.pathname.match(/^\/ws\/([a-z0-9]{8})$/);
+    const wsMatch = url.pathname.match(WS_PATH_RE);
     if (wsMatch) {
       const code = wsMatch[1]!;
       const id = env.ROOM.idFromName(code);
@@ -53,13 +175,15 @@ export default {
     }
 
     // PUT/GET/DELETE /api/rooms/:code/audio/:itemId — R2 audio storage
-    const audioMatch = url.pathname.match(/^\/api\/rooms\/([a-z0-9]{8})\/audio\/(.+)$/);
+    const audioMatch = url.pathname.match(AUDIO_PATH_RE);
     if (audioMatch) {
       const [, code, itemId] = audioMatch;
       const key = `${code}/${itemId}`;
 
       if (request.method === "PUT") {
-        const contentLength = parseInt(request.headers.get("content-length") || "0");
+        const contentLength = parseInt(
+          request.headers.get("content-length") || "0",
+        );
         if (contentLength > MAX_AUDIO_SIZE) {
           return new Response("File too large", { status: 413 });
         }

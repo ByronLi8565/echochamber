@@ -1,40 +1,48 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>EchoChamber</title>
-  <link rel="stylesheet" href="./styles.css">
-</head>
-<body>
-  <div id="toolbar">
-    <button id="btn-add-sound">Add Sound</button>
-    <button id="btn-add-text">Add Text</button>
-    <button id="btn-export">Export</button>
-    <button id="btn-import">Import</button>
-    <button id="btn-deploy">Deploy</button>
-    <div id="connection-wrapper" style="display: none;">
-      <div id="connection-status" class="disconnected" title="Disconnected"></div>
-      <span id="connection-count">1</span>
-    </div>
-  </div>
-  <div id="canvas-container">
-    <div id="canvas-world"></div>
-  </div>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>EchoChamber</title>
+        <link rel="stylesheet" href="./styles.css" />
+    </head>
+    <body>
+        <div id="toolbar">
+            <button id="btn-add-sound">Add Sound</button>
+            <button id="btn-add-text">Add Text</button>
+            <button id="btn-export">Export</button>
+            <button id="btn-import">Import</button>
+            <button id="btn-deploy">Deploy</button>
+            <div id="connection-wrapper" style="display: none">
+                <div
+                    id="connection-status"
+                    class="disconnected"
+                    title="Disconnected"
+                ></div>
+                <span id="connection-count">1</span>
+            </div>
+        </div>
+        <div id="canvas-container">
+            <div id="canvas-world"></div>
+        </div>
 
-  <!-- Deploy/Share modal -->
-  <div id="deploy-modal-backdrop" class="modal-backdrop"></div>
-  <div id="deploy-modal" class="modal">
-    <div class="modal-header">Share your soundboard</div>
-    <div class="modal-body">
-      <input id="deploy-modal-url" type="text" readonly />
-      <div class="modal-actions">
-        <button id="deploy-modal-copy">Copy</button>
-        <button id="deploy-modal-close">Close</button>
-      </div>
-    </div>
-  </div>
+        <!-- Deploy/Share modal -->
+        <div id="deploy-modal-backdrop" class="modal-backdrop"></div>
+        <div id="deploy-modal" class="modal">
+            <div class="modal-header">Share your soundboard</div>
+            <div class="modal-body">
+                <textarea
+                    id="deploy-modal-url"
+                    class="share-url"
+                    readonly
+                ></textarea>
+                <div class="modal-actions">
+                    <button id="deploy-modal-copy">Copy</button>
+                    <button id="deploy-modal-close">Close</button>
+                </div>
+            </div>
+        </div>
 
-  <script type="module" src="./app.ts"></script>
-</body>
+        <script type="module" src="./app.ts"></script>
+    </body>
 </html>

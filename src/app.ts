@@ -1,12 +1,22 @@
 import "./canvas.ts";
 import { screenToWorld, isPanningNow, restoreViewport } from "./canvas.ts";
-import { createItem, removeItem, itemRegistry, setUsePersistenceId, type CanvasItem } from "./items.ts";
+import {
+  createItem,
+  removeItem,
+  itemRegistry,
+  setUsePersistenceId,
+  type CanvasItem,
+} from "./items.ts";
 import { hotkeyRegistry } from "./soundboard.ts";
 import { persistence } from "./persistence.ts";
 import { loadAudio } from "./audio-storage.ts";
 import { startSync, isConnected } from "./sync.ts";
 import { initDeployModal } from "./deploy-modal.ts";
-import { setAudioSyncRoom, markAudioKeyKnown, checkForNewAudioKeys } from "./audio-sync.ts";
+import {
+  setAudioSyncRoom,
+  markAudioKeyKnown,
+  checkForNewAudioKeys,
+} from "./audio-sync.ts";
 
 const container = document.getElementById("canvas-container")!;
 const btnAddSound = document.getElementById("btn-add-sound")!;
@@ -42,7 +52,7 @@ container.addEventListener("pointerup", (e) => {
     isPanning: isPanningNow(),
     target: e.target,
     container,
-    world: document.getElementById("canvas-world")
+    world: document.getElementById("canvas-world"),
   });
 
   if (!placementMode) {
@@ -53,8 +63,17 @@ container.addEventListener("pointerup", (e) => {
     console.log("[Canvas] Currently panning, ignoring click");
     return;
   }
-  if (e.target !== container && e.target !== document.getElementById("canvas-world")) {
+  if (
+    e.target !== container &&
+    e.target !== document.getElementById("canvas-world")
+  ) {
     console.log("[Canvas] Click target not valid for placement, ignoring");
+    return;
+  }
+  if (!persistence.canApplyLocalEdits()) {
+    console.log(
+      "[Canvas] Waiting for first sync snapshot, ignoring local create",
+    );
     return;
   }
 
@@ -70,7 +89,11 @@ document.addEventListener("keydown", (e) => {
   // Don't trigger hotkeys while typing in editable fields
   const active = document.activeElement as HTMLElement | null;
   if (active?.isContentEditable) return;
-  if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return;
+  if (
+    active instanceof HTMLInputElement ||
+    active instanceof HTMLTextAreaElement
+  )
+    return;
 
   const key = e.key.toUpperCase();
   const handler = hotkeyRegistry.get(key);
@@ -84,7 +107,9 @@ document.addEventListener("keydown", (e) => {
 // --- Room code parsing ---
 
 function getRoomCodeFromURL(): string | null {
-  const match = window.location.pathname.match(/^\/([a-z0-9]{8})$/);
+  const match = window.location.pathname.match(
+    /^\/((?:[a-z0-9]{8}|[a-z]{3,10}-[a-z]{3,10}-[a-z]{3,10}))$/,
+  );
   return match ? match[1]! : null;
 }
 
@@ -118,8 +143,9 @@ async function initializeApp() {
 
   const doc = persistence.getDoc();
 
-  // Restore viewport (may be undefined after resetForRoom with Automerge.init)
-  restoreViewport(doc.viewport?.offsetX ?? 0, doc.viewport?.offsetY ?? 0);
+  // Viewport is local-only (not in CRDT)
+  const viewport = persistence.getViewport();
+  restoreViewport(viewport.offsetX, viewport.offsetY);
 
   // Recreate all items from local doc (empty when joining a room)
   const audioContext = new AudioContext();
@@ -142,19 +168,33 @@ async function initializeApp() {
     // All other state (filters, hotkey, name, text, position) is loaded via subscriptions
   }
 
-  console.log(`[App] Restored ${Object.keys(doc.items).length} items from persistence`);
+  console.log(
+    `[App] Restored ${Object.keys(doc.items ?? {}).length} items from persistence`,
+  );
 
   // --- Sync setup ---
   if (roomCode) {
+    if (!persistence.canApplyLocalEdits()) {
+      btnAddSound.setAttribute("disabled", "true");
+      btnAddText.setAttribute("disabled", "true");
+    }
+
     persistence.enableSync();
     setAudioSyncRoom(roomCode);
 
     // Global subscription to reconcile DOM with remote doc changes
     persistence.subscribeGlobal((doc) => {
+      if (persistence.canApplyLocalEdits()) {
+        btnAddSound.removeAttribute("disabled");
+        btnAddText.removeAttribute("disabled");
+      }
+
       const docItemIds = new Set(Object.keys(doc.items));
       const registryIds = new Set(itemRegistry.keys());
 
-      console.log(`[Sync] Reconciling: doc has ${docItemIds.size} items, registry has ${registryIds.size} items`);
+      console.log(
+        `[Sync] Reconciling: doc has ${docItemIds.size} items, registry has ${registryIds.size} items`,
+      );
       console.log(`[Sync] Doc items:`, Array.from(docItemIds));
       console.log(`[Sync] Registry items:`, Array.from(registryIds));
 
@@ -162,7 +202,9 @@ async function initializeApp() {
       for (const itemId of docItemIds) {
         if (!registryIds.has(itemId)) {
           const itemData = doc.items[itemId]!;
-          console.log(`[Sync] Creating remote item ${itemId} (${itemData.type})`);
+          console.log(
+            `[Sync] Creating remote item ${itemId} (${itemData.type})`,
+          );
           createItem(itemData.type, itemData.x, itemData.y, itemId);
         }
       }
@@ -185,13 +227,16 @@ async function initializeApp() {
       checkForNewAudioKeys(doc.audioFiles);
     });
 
-    startSync({
-      roomCode,
-      getDoc: () => persistence.getDoc(),
-      applyRemoteDoc: (newDoc) => persistence.applyRemoteDoc(newDoc),
-      onConnected: () => updateConnectionStatus(true),
-      onDisconnected: () => updateConnectionStatus(false),
-    }, true); // true = joining existing room
+    startSync(
+      {
+        roomCode,
+        getDoc: () => persistence.getDoc(),
+        applyRemoteDoc: (newDoc) => persistence.applyRemoteDoc(newDoc),
+        onConnected: () => updateConnectionStatus(true),
+        onDisconnected: () => updateConnectionStatus(false),
+      },
+      true,
+    ); // true = joining existing room
 
     const wrapperEl = document.getElementById("connection-wrapper");
     if (wrapperEl) wrapperEl.style.display = "flex";

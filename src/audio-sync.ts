@@ -16,6 +16,10 @@ const pendingDownloads = new Set<string>();
 // --- State management ---
 
 export function setAudioSyncRoom(code: string): void {
+  if (roomCode !== code) {
+    knownAudioKeys.clear();
+    pendingDownloads.clear();
+  }
   roomCode = code;
 }
 
@@ -68,33 +72,48 @@ function deserializeAudioBinary(data: ArrayBuffer): AudioBuffer {
 
 class AudioUploadError {
   readonly _tag = "AudioUploadError" as const;
-  constructor(readonly itemId: string, readonly cause: unknown) {}
+  constructor(
+    readonly itemId: string,
+    readonly cause: unknown,
+  ) {}
 }
 
 class AudioFetchError {
   readonly _tag = "AudioFetchError" as const;
-  constructor(readonly itemId: string, readonly cause: unknown) {}
+  constructor(
+    readonly itemId: string,
+    readonly cause: unknown,
+  ) {}
 }
 
 // --- Effect-based operations ---
 
 const retrySchedule = pipe(
   Schedule.exponential("500 millis"),
-  Schedule.compose(Schedule.recurs(3))
+  Schedule.compose(Schedule.recurs(3)),
 );
 
 function uploadEffect(itemId: string, audioBuffer: AudioBuffer) {
-  return Effect.tryPromise({
-    try: () => {
-      const binary = serializeAudioBinary(audioBuffer);
-      return fetch(`/api/rooms/${roomCode}/audio/${itemId}`, {
-        method: "PUT",
-        headers: { "Content-Length": String(binary.byteLength) },
-        body: binary,
-      });
-    },
-    catch: (cause) => new AudioUploadError(itemId, cause),
-  });
+  return pipe(
+    Effect.tryPromise({
+      try: () => {
+        const binary = serializeAudioBinary(audioBuffer);
+        return fetch(`/api/rooms/${roomCode}/audio/${itemId}`, {
+          method: "PUT",
+          headers: { "Content-Length": String(binary.byteLength) },
+          body: binary,
+        });
+      },
+      catch: (cause) => new AudioUploadError(itemId, cause),
+    }),
+    Effect.flatMap((response) =>
+      response.ok
+        ? Effect.void
+        : Effect.fail(
+            new AudioUploadError(itemId, new Error(`HTTP ${response.status}`)),
+          ),
+    ),
+  );
 }
 
 function downloadEffect(itemId: string) {
@@ -113,21 +132,30 @@ function downloadEffect(itemId: string) {
 
 // --- Public API (Promise-based for callers) ---
 
-export async function uploadAudio(itemId: string, audioBuffer: AudioBuffer): Promise<void> {
+export async function uploadAudio(
+  itemId: string,
+  audioBuffer: AudioBuffer,
+): Promise<void> {
   if (!roomCode) return;
 
   await Effect.runPromise(
     pipe(
       uploadEffect(itemId, audioBuffer),
       Effect.catchAll((err) => {
-        console.error(`[AudioSync] Upload failed for ${err.itemId}:`, err.cause);
+        console.error(
+          `[AudioSync] Upload failed for ${err.itemId}:`,
+          err.cause,
+        );
         return Effect.void;
       }),
-    )
+    ),
   );
 }
 
-export async function downloadAudioIfMissing(itemId: string, audioKey: string): Promise<void> {
+export async function downloadAudioIfMissing(
+  itemId: string,
+  audioKey: string,
+): Promise<void> {
   if (!roomCode) return;
   if (pendingDownloads.has(itemId)) return;
 
@@ -149,10 +177,13 @@ export async function downloadAudioIfMissing(itemId: string, audioKey: string): 
       pipe(
         downloadEffect(itemId),
         Effect.catchAll((err) => {
-          console.error(`[AudioSync] Download failed for ${err.itemId}:`, err.cause);
+          console.error(
+            `[AudioSync] Download failed for ${err.itemId}:`,
+            err.cause,
+          );
           return Effect.succeed(null);
         }),
-      )
+      ),
     );
 
     if (!arrayBuffer) return;
@@ -172,7 +203,9 @@ export async function downloadAudioIfMissing(itemId: string, audioKey: string): 
   }
 }
 
-export async function uploadAllExistingAudio(audioFiles: Record<string, string>): Promise<void> {
+export async function uploadAllExistingAudio(
+  audioFiles: Record<string, string>,
+): Promise<void> {
   if (!roomCode) return;
 
   const entries = Object.entries(audioFiles);
@@ -200,7 +233,7 @@ export async function uploadAllExistingAudio(audioFiles: Record<string, string>)
         console.error("[AudioSync] Batch upload error:", err);
         return Effect.void;
       }),
-    )
+    ),
   );
 
   console.log(`[AudioSync] Uploaded ${entries.length} audio files`);
@@ -219,7 +252,9 @@ export function checkForNewAudioKeys(audioFiles: Record<string, string>): void {
 export function deleteAudioFromR2(itemId: string): void {
   if (!roomCode) return;
 
-  fetch(`/api/rooms/${roomCode}/audio/${itemId}`, { method: "DELETE" }).catch((err) => {
-    console.error(`[AudioSync] Delete failed for ${itemId}:`, err);
-  });
+  fetch(`/api/rooms/${roomCode}/audio/${itemId}`, { method: "DELETE" }).catch(
+    (err) => {
+      console.error(`[AudioSync] Delete failed for ${itemId}:`, err);
+    },
+  );
 }

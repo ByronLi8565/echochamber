@@ -24,6 +24,14 @@
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noPropertyAccessFromIndexSignature": false
-  }
+    "noPropertyAccessFromIndexSignature": false,
+  },
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "index.ts",
+    "build-client.ts",
+    "playwright.config.ts",
+  ],
+  "exclude": ["dist", "worker", "node_modules"],
 }

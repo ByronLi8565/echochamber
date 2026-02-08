@@ -12,6 +12,8 @@ export interface CanvasItem {
   element: HTMLElement;
   cleanup?: () => void;
   loadAudioBuffer?: (buffer: AudioBuffer | null) => void; // For soundboard restoration
+  hotkey?: string;
+  name?: string;
 }
 
 export const itemRegistry = new Map<string, CanvasItem>();
@@ -35,9 +37,25 @@ export function setUsePersistenceId(use: boolean) {
   usePersistenceId = use;
 }
 
-export function createItem(type: CanvasItem["type"], x: number, y: number, existingId?: string): CanvasItem {
-  console.log(`[Items] Creating ${type} at (${x}, ${y})${existingId ? ` with ID ${existingId}` : ""}`);
-  const item = type === "soundboard" ? createSoundboard(x, y, existingId) : createTextbox(x, y, existingId);
+export function createItem(
+  type: CanvasItem["type"],
+  x: number,
+  y: number,
+  existingId?: string,
+): CanvasItem {
+  if (usePersistenceId && !existingId && !persistence.canApplyLocalEdits()) {
+    throw new Error(
+      "Local edits are blocked until the first sync snapshot arrives",
+    );
+  }
+
+  console.log(
+    `[Items] Creating ${type} at (${x}, ${y})${existingId ? ` with ID ${existingId}` : ""}`,
+  );
+  const item =
+    type === "soundboard"
+      ? createSoundboard(x, y, existingId)
+      : createTextbox(x, y, existingId);
   itemRegistry.set(item.id, item);
   console.log(`[Items] Item ${item.id} added to registry`);
   makeDraggable(item);
@@ -54,7 +72,11 @@ export function createItem(type: CanvasItem["type"], x: number, y: number, exist
       width: rect.width,
       height: rect.height,
       ...(type === "soundboard"
-        ? { name: (item as any).name || "", hotkey: (item as any).hotkey || "", filters: { lowpass: 0, highpass: 0, reverb: 0, reversed: 0 } }
+        ? {
+            name: (item as any).name || "",
+            hotkey: (item as any).hotkey || "",
+            filters: { lowpass: 0, highpass: 0, reverb: 0, reversed: 0 },
+          }
         : { text: "Click to edit" }),
     } as any);
     console.log(`[Items] Item ${item.id} persisted to storage`);

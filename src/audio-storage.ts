@@ -35,7 +35,9 @@ function openDatabase(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
-export function serializeAudioBuffer(buffer: AudioBuffer): SerializedAudioBuffer {
+export function serializeAudioBuffer(
+  buffer: AudioBuffer,
+): SerializedAudioBuffer {
   const channelData: Float32Array[] = [];
   for (let i = 0; i < buffer.numberOfChannels; i++) {
     channelData.push(buffer.getChannelData(i));
@@ -51,22 +53,28 @@ export function serializeAudioBuffer(buffer: AudioBuffer): SerializedAudioBuffer
 
 export function deserializeAudioBuffer(
   data: SerializedAudioBuffer,
-  audioContext: AudioContext
+  audioContext: AudioContext,
 ): AudioBuffer {
   const buffer = audioContext.createBuffer(
     data.numberOfChannels,
     data.length,
-    data.sampleRate
+    data.sampleRate,
   );
 
   for (let i = 0; i < data.numberOfChannels; i++) {
-    buffer.copyToChannel(data.channelData[i], i);
+    const channel = data.channelData[i];
+    if (channel) {
+      buffer.copyToChannel(new Float32Array(channel), i);
+    }
   }
 
   return buffer;
 }
 
-export async function saveAudio(key: string, buffer: AudioBuffer): Promise<void> {
+export async function saveAudio(
+  key: string,
+  buffer: AudioBuffer,
+): Promise<void> {
   const db = await openDatabase();
   const serialized = serializeAudioBuffer(buffer);
 
@@ -82,7 +90,7 @@ export async function saveAudio(key: string, buffer: AudioBuffer): Promise<void>
 
 export async function loadAudio(
   key: string,
-  audioContext: AudioContext
+  audioContext: AudioContext,
 ): Promise<AudioBuffer | null> {
   const db = await openDatabase();
 

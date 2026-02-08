@@ -1,5 +1,6 @@
 import * as Automerge from "@automerge/automerge";
 import type { Doc, SyncState, SyncMessage } from "@automerge/automerge";
+import { Effect, pipe } from "effect";
 
 interface SyncConfig {
   roomCode: string;
@@ -8,6 +9,14 @@ interface SyncConfig {
   onConnected?: () => void;
   onDisconnected?: () => void;
   onConnectionCount?: (count: number) => void;
+}
+
+interface DestructiveIntentMessage {
+  type: "destructiveIntent";
+  token: string;
+  op: "delete-item";
+  itemId: string;
+  expiresAt: number;
 }
 
 let ws: WebSocket | null = null;
@@ -21,8 +30,10 @@ let reconnectAttempts = 0;
 
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 30000;
+const DESTRUCTIVE_INTENT_TTL_MS = 10000;
 
 export function startSync(cfg: SyncConfig, joining: boolean = false): void {
+  stopSync();
   config = cfg;
   isJoiningRoom = joining;
   hasReceivedFirstSync = !joining; // If deploying (not joining), we can send immediately
@@ -36,9 +47,10 @@ export function stopSync(): void {
     clearTimeout(reconnectTimeout);
     reconnectTimeout = null;
   }
-  if (ws) {
-    ws.close();
-    ws = null;
+  const socket = ws;
+  ws = null;
+  if (socket) {
+    socket.close();
   }
   connected = false;
   hasReceivedFirstSync = false;
@@ -78,16 +90,44 @@ export function notifyLocalChange(): void {
   }
 }
 
+export function requestDeleteIntent(itemId: string): string | null {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return null;
+
+  const message: DestructiveIntentMessage = {
+    type: "destructiveIntent",
+    token: crypto.randomUUID(),
+    op: "delete-item",
+    itemId,
+    expiresAt: Date.now() + DESTRUCTIVE_INTENT_TTL_MS,
+  };
+
+  return Effect.runSync(
+    pipe(
+      Effect.try({
+        try: () => {
+          ws!.send(JSON.stringify(message));
+          return message.token;
+        },
+        catch: () => null,
+      }),
+      Effect.catchAll(() => Effect.succeed(null)),
+    ),
+  );
+}
+
 function connect(): void {
   if (!config) return;
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const url = `${protocol}//${window.location.host}/ws/${config.roomCode}`;
 
-  ws = new WebSocket(url);
-  ws.binaryType = "arraybuffer";
+  const socket = new WebSocket(url);
+  socket.binaryType = "arraybuffer";
+  ws = socket;
 
-  ws.addEventListener("open", () => {
+  socket.addEventListener("open", () => {
+    if (ws !== socket) return;
+    if (!config) return;
     console.log("[Sync] WebSocket connected");
     connected = true;
     reconnectAttempts = 0; // Reset backoff on successful connection
@@ -103,65 +143,112 @@ function connect(): void {
       const [newSyncState, msg] = Automerge.generateSyncMessage(doc, syncState);
       syncState = newSyncState;
       if (msg) {
-        ws!.send(msg as unknown as ArrayBuffer);
+        socket.send(msg as unknown as ArrayBuffer);
       }
     }
 
     config?.onConnected?.();
   });
 
-  ws.addEventListener("message", (event) => {
+  socket.addEventListener("message", (event) => {
+    if (ws !== socket) return;
     if (!config) return;
 
     // Handle JSON messages (e.g., connection count)
     if (typeof event.data === "string") {
-      try {
-        const json = JSON.parse(event.data);
-        if (json.type === "connectionCount" && typeof json.count === "number") {
-          console.log(`[Sync] Connection count: ${json.count}`);
-          updateConnectionCount(json.count);
-          config.onConnectionCount?.(json.count);
-        }
-      } catch (error) {
-        console.error("[Sync] Failed to parse JSON message:", error);
-      }
+      Effect.runSync(
+        pipe(
+          Effect.try({
+            try: () =>
+              JSON.parse(event.data) as { type?: string; count?: unknown },
+            catch: (error) => error,
+          }),
+          Effect.flatMap((json) => {
+            const count = json.count;
+            if (json.type !== "connectionCount" || typeof count !== "number") {
+              return Effect.void;
+            }
+
+            return Effect.sync(() => {
+              console.log(`[Sync] Connection count: ${count}`);
+              updateConnectionCount(count);
+              config?.onConnectionCount?.(count);
+            });
+          }),
+          Effect.catchAll((error) =>
+            Effect.sync(() => {
+              console.error("[Sync] Failed to parse JSON message:", error);
+            }),
+          ),
+        ),
+      );
       return;
     }
 
     if (!(event.data instanceof ArrayBuffer)) return;
 
-    try {
-      const message = new Uint8Array(event.data) as unknown as SyncMessage;
-      const doc = config.getDoc();
+    Effect.runSync(
+      pipe(
+        Effect.try({
+          try: () => {
+            const message = new Uint8Array(
+              event.data,
+            ) as unknown as SyncMessage;
+            const doc = config!.getDoc();
 
-      console.log(`[Sync] Received sync message, current doc has ${Object.keys(doc.items || {}).length} items`);
+            console.log(
+              `[Sync] Received sync message, current doc has ${Object.keys(doc.items || {}).length} items`,
+            );
 
-      const [newDoc, newSyncState] = Automerge.receiveSyncMessage(doc, syncState, message);
-      syncState = newSyncState;
+            const [newDoc, newSyncState] = Automerge.receiveSyncMessage(
+              doc,
+              syncState,
+              message,
+            );
+            syncState = newSyncState;
 
-      console.log(`[Sync] After receive, new doc has ${Object.keys(newDoc.items || {}).length} items`);
+            console.log(
+              `[Sync] After receive, new doc has ${Object.keys(newDoc.items || {}).length} items`,
+            );
 
-      // Mark that we've received first sync (important for joining rooms)
-      if (!hasReceivedFirstSync) {
-        hasReceivedFirstSync = true;
-        console.log("[Sync] First sync received - now ready to send local changes");
-      }
+            // Mark that we've received first sync (important for joining rooms)
+            if (!hasReceivedFirstSync) {
+              hasReceivedFirstSync = true;
+              console.log(
+                "[Sync] First sync received - now ready to send local changes",
+              );
+            }
 
-      // Apply remote changes
-      config.applyRemoteDoc(newDoc);
+            // Apply remote changes
+            config!.applyRemoteDoc(newDoc);
 
-      // Generate response message
-      const [updatedSyncState, replyMsg] = Automerge.generateSyncMessage(newDoc, syncState);
-      syncState = updatedSyncState;
-      if (replyMsg && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(replyMsg as unknown as ArrayBuffer);
-      }
-    } catch (error) {
-      console.error("[Sync] Error processing sync message:", error);
-    }
+            // Generate response message
+            const [updatedSyncState, replyMsg] = Automerge.generateSyncMessage(
+              newDoc,
+              syncState,
+            );
+            syncState = updatedSyncState;
+            if (
+              replyMsg &&
+              ws === socket &&
+              socket.readyState === WebSocket.OPEN
+            ) {
+              socket.send(replyMsg as unknown as ArrayBuffer);
+            }
+          },
+          catch: (error) => error,
+        }),
+        Effect.catchAll((error) =>
+          Effect.sync(() => {
+            console.error("[Sync] Error processing sync message:", error);
+          }),
+        ),
+      ),
+    );
   });
 
-  ws.addEventListener("close", () => {
+  socket.addEventListener("close", () => {
+    if (ws !== socket) return;
     console.log("[Sync] WebSocket disconnected");
     connected = false;
     ws = null;
@@ -169,7 +256,8 @@ function connect(): void {
     scheduleReconnect();
   });
 
-  ws.addEventListener("error", () => {
+  socket.addEventListener("error", () => {
+    if (ws !== socket) return;
     console.log("[Sync] WebSocket error");
     connected = false;
   });
@@ -180,10 +268,15 @@ function scheduleReconnect(): void {
   if (reconnectTimeout !== null) return;
 
   // Exponential backoff: 2s, 4s, 8s, 16s, capped at 30s
-  const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts), RECONNECT_MAX_MS);
+  const delay = Math.min(
+    RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts),
+    RECONNECT_MAX_MS,
+  );
   reconnectAttempts++;
 
-  console.log(`[Sync] Reconnecting in ${delay}ms (attempt ${reconnectAttempts})...`);
+  console.log(
+    `[Sync] Reconnecting in ${delay}ms (attempt ${reconnectAttempts})...`,
+  );
 
   reconnectTimeout = setTimeout(() => {
     reconnectTimeout = null;

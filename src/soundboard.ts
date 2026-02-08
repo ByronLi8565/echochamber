@@ -2,7 +2,7 @@ import type { CanvasItem } from "./items.ts";
 import { generateId } from "./items.ts";
 import { consumeDrag } from "./drag.ts";
 import { persistence } from "./persistence.ts";
-import { saveAudio } from "./audio-storage.ts";
+import { saveAudio, deleteAudio } from "./audio-storage.ts";
 import { uploadAudio } from "./audio-sync.ts";
 
 // --- Shared audio infrastructure ---
@@ -32,7 +32,11 @@ function getReverbImpulse(ctx: AudioContext): AudioBuffer {
 }
 
 function reverseBuffer(ctx: AudioContext, buffer: AudioBuffer): AudioBuffer {
-  const reversed = ctx.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
+  const reversed = ctx.createBuffer(
+    buffer.numberOfChannels,
+    buffer.length,
+    buffer.sampleRate,
+  );
   for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
     const src = buffer.getChannelData(ch);
     const dst = reversed.getChannelData(ch);
@@ -76,7 +80,11 @@ interface FilterSet {
   nightcore: boolean;
 }
 
-export function createSoundboard(x: number, y: number, existingId?: string): CanvasItem {
+export function createSoundboard(
+  x: number,
+  y: number,
+  existingId?: string,
+): CanvasItem {
   const id = existingId || generateId();
   soundCounter++;
   console.log(`[Soundboard] Creating soundboard ${id} (Sound ${soundCounter})`);
@@ -110,7 +118,12 @@ export function createSoundboard(x: number, y: number, existingId?: string): Can
   hotkeyBubble.className = "prop-bubble prop-hotkey";
   hotkeyBubble.title = "Hotkey (click to change)";
 
-  const filters: FilterSet = { slowed: false, reverb: false, reversed: false, nightcore: false };
+  const filters: FilterSet = {
+    slowed: false,
+    reverb: false,
+    reversed: false,
+    nightcore: false,
+  };
   const filterDefs: { key: keyof FilterSet; label: string; title: string }[] = [
     { key: "slowed", label: "Sl", title: "Slowed (0.75x)" },
     { key: "reverb", label: "Rv", title: "Reverb" },
@@ -197,14 +210,20 @@ export function createSoundboard(x: number, y: number, existingId?: string): Can
         reversedCache = null;
         setState_internal("has-audio");
 
-        // Persist audio to IndexedDB
-        const audioKey = `audio-${id}`;
+        const previousAudioKey = persistence.getDoc().audioFiles?.[id];
+        const audioKey = `audio-${id}-${Date.now()}`;
         await saveAudio(audioKey, audioBuffer);
 
         // Upload to R2 before setting Automerge ref (prevents race condition)
         await uploadAudio(id, audioBuffer);
 
         persistence.setAudioFile(id, audioKey);
+
+        if (previousAudioKey && previousAudioKey !== audioKey) {
+          deleteAudio(previousAudioKey).catch((error) => {
+            console.error("Failed to delete previous audio key:", error);
+          });
+        }
       });
 
       mediaRecorder.start();
@@ -358,7 +377,7 @@ export function createSoundboard(x: number, y: number, existingId?: string): Can
 
   // Subscribe to Automerge changes
   unsubscribe = persistence.subscribeToItem(id, (itemData) => {
-    if (!itemData || itemData.type !== 'soundboard') return;
+    if (!itemData || itemData.type !== "soundboard") return;
 
     // Update filters
     const newFilters: FilterSet = {
@@ -393,7 +412,10 @@ export function createSoundboard(x: number, y: number, existingId?: string): Can
     }
 
     // Update name (only if not currently editing)
-    if (nameLabel.contentEditable === "false" && itemData.name !== nameLabel.textContent) {
+    if (
+      nameLabel.contentEditable === "false" &&
+      itemData.name !== nameLabel.textContent
+    ) {
       nameLabel.textContent = itemData.name || `Sound ${soundCounter}`;
     }
   });
@@ -417,7 +439,10 @@ export function createSoundboard(x: number, y: number, existingId?: string): Can
     }
 
     // Persist name change
-    persistence.updateSoundboardName(id, nameLabel.textContent || `Sound ${soundCounter}`);
+    persistence.updateSoundboardName(
+      id,
+      nameLabel.textContent || `Sound ${soundCounter}`,
+    );
   });
 
   nameLabel.addEventListener("keydown", (e) => {
@@ -444,5 +469,15 @@ export function createSoundboard(x: number, y: number, existingId?: string): Can
     }
   }
 
-  return { id, type: "soundboard" as const, x, y, element: wrapper, cleanup, loadAudioBuffer, hotkey, name: nameLabel.textContent || "" };
+  return {
+    id,
+    type: "soundboard" as const,
+    x,
+    y,
+    element: wrapper,
+    cleanup,
+    loadAudioBuffer,
+    hotkey,
+    name: nameLabel.textContent || "",
+  };
 }

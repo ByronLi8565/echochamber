@@ -4,12 +4,19 @@
 
 import * as Automerge from "@automerge/automerge";
 import type { Doc } from "@automerge/automerge";
-import { saveAudio, loadAudio, deleteAudio, getAllAudioKeys, serializeAudioBuffer } from "./audio-storage";
+import {
+  saveAudio,
+  loadAudio,
+  deleteAudio,
+  getAllAudioKeys,
+  serializeAudioBuffer,
+} from "./audio-storage";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { notifyLocalChange } from "./sync";
+import { notifyLocalChange, requestDeleteIntent } from "./sync";
 import { deleteAudioFromR2 } from "./audio-sync";
 
 const STORAGE_KEY = "echochamber-doc";
+const VIEWPORT_STORAGE_KEY = "echochamber-viewport";
 const SAVE_DEBOUNCE_MS = 500;
 const VERSION = "1.0.0";
 
@@ -43,19 +50,24 @@ interface EchoChamberDoc {
     version: string;
     createdAt: number;
     lastModified: number;
-  };
-  viewport: {
-    offsetX: number;
-    offsetY: number;
+    destructiveIntentToken?: string;
+    destructiveIntentAt?: number;
   };
   items: { [itemId: string]: SoundboardItemData | TextboxItemData };
   nextItemId: number;
   audioFiles: { [itemId: string]: string };
 }
 
+interface ViewportState {
+  offsetX: number;
+  offsetY: number;
+}
+
 // Subscription types
 type SubscriptionCallback = (doc: EchoChamberDoc) => void;
-type ItemSubscriptionCallback = (itemData: SoundboardItemData | TextboxItemData | null) => void;
+type ItemSubscriptionCallback = (
+  itemData: SoundboardItemData | TextboxItemData | null,
+) => void;
 
 class Persistence {
   private doc: Automerge.Doc<EchoChamberDoc>;
@@ -65,9 +77,13 @@ class Persistence {
   private isNotifying = false;
   private notifyTimeout: number | null = null;
   private syncEnabled = false;
+  private viewport: ViewportState;
+  private localEditsBlocked = false;
+  private warnedAboutBlockedEdits = false;
 
   constructor() {
-    this.doc = this.loadDoc();
+    this.doc = this.ensureDocShape(this.loadDoc());
+    this.viewport = this.loadViewport();
   }
 
   private loadDoc(): Automerge.Doc<EchoChamberDoc> {
@@ -86,20 +102,91 @@ class Persistence {
     }
 
     // Create new document
-    return Automerge.from({
+    return Automerge.from(
+      this.createInitialDoc() as unknown as Record<string, unknown>,
+    ) as Automerge.Doc<EchoChamberDoc>;
+  }
+
+  private createInitialDoc(): EchoChamberDoc {
+    const now = Date.now();
+    return {
       metadata: {
         version: VERSION,
-        createdAt: Date.now(),
-        lastModified: Date.now(),
-      },
-      viewport: {
-        offsetX: 0,
-        offsetY: 0,
+        createdAt: now,
+        lastModified: now,
       },
       items: {},
       nextItemId: 0,
       audioFiles: {},
+    };
+  }
+
+  private ensureDocShape(
+    doc: Automerge.Doc<EchoChamberDoc>,
+  ): Automerge.Doc<EchoChamberDoc> {
+    if (
+      doc.metadata &&
+      typeof doc.nextItemId === "number" &&
+      doc.items &&
+      doc.audioFiles
+    ) {
+      return doc;
+    }
+
+    return Automerge.change(doc, (mutableDoc) => {
+      this.ensureMutableDocShape(mutableDoc);
     });
+  }
+
+  private ensureMutableDocShape(doc: EchoChamberDoc): void {
+    const mutableDoc = doc as unknown as {
+      metadata?: EchoChamberDoc["metadata"];
+      items?: EchoChamberDoc["items"];
+      nextItemId?: number;
+      audioFiles?: EchoChamberDoc["audioFiles"];
+    };
+    const now = Date.now();
+
+    if (!mutableDoc.metadata) {
+      mutableDoc.metadata = {
+        version: VERSION,
+        createdAt: now,
+        lastModified: now,
+      };
+    } else {
+      mutableDoc.metadata.version ??= VERSION;
+      mutableDoc.metadata.createdAt ??= now;
+      mutableDoc.metadata.lastModified ??= now;
+    }
+
+    if (!mutableDoc.items) mutableDoc.items = {};
+    if (typeof mutableDoc.nextItemId !== "number") mutableDoc.nextItemId = 0;
+    if (!mutableDoc.audioFiles) mutableDoc.audioFiles = {};
+  }
+
+  private loadViewport(): ViewportState {
+    const stored = localStorage.getItem(VIEWPORT_STORAGE_KEY);
+    if (!stored) {
+      return { offsetX: 0, offsetY: 0 };
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as Partial<ViewportState>;
+      if (
+        typeof parsed.offsetX === "number" &&
+        typeof parsed.offsetY === "number"
+      ) {
+        return { offsetX: parsed.offsetX, offsetY: parsed.offsetY };
+      }
+    } catch (error) {
+      console.error("Failed to load viewport:", error);
+    }
+
+    return { offsetX: 0, offsetY: 0 };
+  }
+
+  private saveViewport(): void {
+    localStorage.setItem(VIEWPORT_STORAGE_KEY, JSON.stringify(this.viewport));
   }
 
   private scheduleSave(): void {
@@ -116,9 +203,9 @@ class Persistence {
   private saveDoc(): void {
     try {
       const bytes = Automerge.save(this.doc);
-      let binaryString = '';
+      let binaryString = "";
       for (let i = 0; i < bytes.length; i++) {
-        binaryString += String.fromCharCode(bytes[i]);
+        binaryString += String.fromCharCode(bytes[i] ?? 0);
       }
       const base64 = btoa(binaryString);
       localStorage.setItem(STORAGE_KEY, base64);
@@ -131,6 +218,14 @@ class Persistence {
     return this.doc;
   }
 
+  getViewport(): ViewportState {
+    return { ...this.viewport };
+  }
+
+  canApplyLocalEdits(): boolean {
+    return !this.localEditsBlocked;
+  }
+
   // Subscribe to all document changes
   subscribeGlobal(callback: SubscriptionCallback): () => void {
     this.globalSubscribers.add(callback);
@@ -138,14 +233,17 @@ class Persistence {
   }
 
   // Subscribe to specific item changes
-  subscribeToItem(itemId: string, callback: ItemSubscriptionCallback): () => void {
+  subscribeToItem(
+    itemId: string,
+    callback: ItemSubscriptionCallback,
+  ): () => void {
     if (!this.itemSubscribers.has(itemId)) {
       this.itemSubscribers.set(itemId, new Set());
     }
     this.itemSubscribers.get(itemId)!.add(callback);
 
     // Immediately invoke with current state
-    callback(this.doc.items[itemId] || null);
+    callback(this.doc.items?.[itemId] || null);
 
     return () => {
       const subs = this.itemSubscribers.get(itemId);
@@ -176,7 +274,7 @@ class Persistence {
       }
       // Notify item-specific subscribers
       for (const [itemId, callbacks] of this.itemSubscribers) {
-        const itemData = this.doc.items[itemId] || null;
+        const itemData = this.doc.items?.[itemId] || null;
         for (const callback of callbacks) {
           callback(itemData);
         }
@@ -196,6 +294,8 @@ class Persistence {
   // into the server's doc when sync begins.
   resetForRoom(): void {
     this.doc = Automerge.init<EchoChamberDoc>();
+    this.localEditsBlocked = true;
+    this.warnedAboutBlockedEdits = false;
   }
 
   getDocBytes(): Uint8Array {
@@ -203,23 +303,16 @@ class Persistence {
   }
 
   applyRemoteDoc(newDoc: Doc<EchoChamberDoc>): void {
-    console.log(`[Persistence] Applying remote doc with ${Object.keys(newDoc.items ?? {}).length} items`);
-    console.log(`[Persistence] Remote doc items:`, Object.keys(newDoc.items ?? {}));
-
-    // Preserve local viewport offsets — each client has its own view
-    const localViewport = {
-      offsetX: this.doc.viewport?.offsetX ?? 0,
-      offsetY: this.doc.viewport?.offsetY ?? 0,
-    };
-
-    this.doc = newDoc;
-
-    // Re-apply local viewport WITHOUT triggering sync
-    // (viewport is local-only, shouldn't propagate to other clients)
-    this.doc = Automerge.change(this.doc, (doc) => {
-      doc.viewport.offsetX = localViewport.offsetX;
-      doc.viewport.offsetY = localViewport.offsetY;
-    });
+    console.log(
+      `[Persistence] Applying remote doc with ${Object.keys(newDoc.items ?? {}).length} items`,
+    );
+    console.log(
+      `[Persistence] Remote doc items:`,
+      Object.keys(newDoc.items ?? {}),
+    );
+    this.doc = this.ensureDocShape(newDoc);
+    this.localEditsBlocked = false;
+    this.warnedAboutBlockedEdits = false;
 
     this.scheduleSave();
     this.scheduleNotify();
@@ -227,8 +320,23 @@ class Persistence {
   }
 
   // New generic change method
+  private changeLocal(changeFn: () => void): void {
+    changeFn();
+  }
+
   change(changeFn: (doc: EchoChamberDoc) => void): void {
+    if (this.localEditsBlocked) {
+      if (!this.warnedAboutBlockedEdits) {
+        console.warn(
+          "[Persistence] Ignoring local edit before first sync snapshot",
+        );
+        this.warnedAboutBlockedEdits = true;
+      }
+      return;
+    }
+
     this.doc = Automerge.change(this.doc, (doc) => {
+      this.ensureMutableDocShape(doc);
       changeFn(doc);
       doc.metadata.lastModified = Date.now();
     });
@@ -241,6 +349,7 @@ class Persistence {
 
   // Convenience methods
   updateItemPosition(itemId: string, x: number, y: number): void {
+    if (!this.doc.items?.[itemId]) return;
     this.change((doc) => {
       if (doc.items[itemId]) {
         doc.items[itemId].x = x;
@@ -249,46 +358,53 @@ class Persistence {
     });
   }
 
-  updateSoundboardFilters(itemId: string, filters: SoundboardItemData['filters']): void {
+  updateSoundboardFilters(
+    itemId: string,
+    filters: SoundboardItemData["filters"],
+  ): void {
+    if (!this.doc.items?.[itemId]) return;
     this.change((doc) => {
       const item = doc.items[itemId];
-      if (item && item.type === 'soundboard') {
+      if (item && item.type === "soundboard") {
         item.filters = filters;
       }
     });
   }
 
   updateSoundboardHotkey(itemId: string, hotkey: string): void {
+    if (!this.doc.items?.[itemId]) return;
     this.change((doc) => {
       const item = doc.items[itemId];
-      if (item && item.type === 'soundboard') {
+      if (item && item.type === "soundboard") {
         item.hotkey = hotkey;
       }
     });
   }
 
   updateSoundboardName(itemId: string, name: string): void {
+    if (!this.doc.items?.[itemId]) return;
     this.change((doc) => {
       const item = doc.items[itemId];
-      if (item && item.type === 'soundboard') {
+      if (item && item.type === "soundboard") {
         item.name = name;
       }
     });
   }
 
   updateTextboxText(itemId: string, text: string): void {
+    if (!this.doc.items?.[itemId]) return;
     this.change((doc) => {
       const item = doc.items[itemId];
-      if (item && item.type === 'textbox') {
+      if (item && item.type === "textbox") {
         item.text = text;
       }
     });
   }
 
   updateViewport(offsetX: number, offsetY: number): void {
-    this.change((doc) => {
-      doc.viewport.offsetX = offsetX;
-      doc.viewport.offsetY = offsetY;
+    this.changeLocal(() => {
+      this.viewport = { offsetX, offsetY };
+      this.saveViewport();
     });
   }
 
@@ -300,13 +416,33 @@ class Persistence {
   }
 
   removeItem(itemId: string): void {
+    if (!this.doc.items?.[itemId] && !this.doc.audioFiles?.[itemId]) {
+      return;
+    }
+    const removedAudioKey = this.doc.audioFiles?.[itemId];
+
+    let destructiveIntentToken: string | undefined;
+    if (this.syncEnabled) {
+      destructiveIntentToken = requestDeleteIntent(itemId) ?? undefined;
+      if (!destructiveIntentToken) {
+        console.warn(
+          "[Persistence] Cannot remove item while sync is disconnected",
+        );
+        return;
+      }
+    }
+
     this.change((doc) => {
+      if (destructiveIntentToken) {
+        doc.metadata.destructiveIntentToken = destructiveIntentToken;
+        doc.metadata.destructiveIntentAt = Date.now();
+      }
       delete doc.items[itemId];
       delete doc.audioFiles[itemId];
     });
 
     // Side effect: delete from IndexedDB
-    const audioKey = `audio-${itemId}`;
+    const audioKey = removedAudioKey ?? `audio-${itemId}`;
     deleteAudio(audioKey).catch((error) => {
       console.error("Failed to delete audio:", error);
     });
@@ -318,10 +454,17 @@ class Persistence {
   }
 
   getNextItemId(): string {
+    if (this.localEditsBlocked) {
+      throw new Error(
+        "Local edits are blocked until the first sync snapshot arrives",
+      );
+    }
+
     // Use actor ID + counter to ensure globally unique IDs even with concurrent creation
     const actorId = Automerge.getActorId(this.doc);
-    let counter: number;
+    let counter = 0;
     this.doc = Automerge.change(this.doc, (doc) => {
+      this.ensureMutableDocShape(doc);
       counter = doc.nextItemId;
       doc.nextItemId++;
       doc.metadata.lastModified = Date.now();
@@ -333,7 +476,9 @@ class Persistence {
     }
     // Create a unique ID: first 8 chars of actor + counter
     const id = `${actorId.substring(0, 8)}-${counter!}`;
-    console.log(`[Persistence] Generated ID: ${id} (actor: ${actorId}, counter: ${counter})`);
+    console.log(
+      `[Persistence] Generated ID: ${id} (actor: ${actorId}, counter: ${counter})`,
+    );
     return id;
   }
 
@@ -344,12 +489,18 @@ class Persistence {
   }
 
   async exportToFile(): Promise<Blob> {
+    const metadata = this.doc.metadata ?? {
+      version: VERSION,
+      createdAt: Date.now(),
+      lastModified: Date.now(),
+    };
+
     // Create manifest
     const manifest = {
       version: VERSION,
-      createdAt: this.doc.metadata.createdAt,
-      lastModified: this.doc.metadata.lastModified,
-      itemCount: Object.keys(this.doc.items).length,
+      createdAt: metadata.createdAt,
+      lastModified: metadata.lastModified,
+      itemCount: Object.keys(this.doc.items ?? {}).length,
     };
 
     // Prepare files for ZIP
@@ -359,28 +510,27 @@ class Persistence {
     };
 
     // Add audio files
-    const audioKeys = await getAllAudioKeys();
-    for (const key of audioKeys) {
-      const itemId = key.replace("audio-", "");
-      if (this.doc.audioFiles[itemId]) {
-        const audioContext = new AudioContext();
-        const buffer = await loadAudio(key, audioContext);
-        if (buffer) {
-          const serialized = serializeAudioBuffer(buffer);
-          const json = JSON.stringify({
-            sampleRate: serialized.sampleRate,
-            length: serialized.length,
-            numberOfChannels: serialized.numberOfChannels,
-            channelData: serialized.channelData.map((ch) => Array.from(ch)),
-          });
-          files[`audio/${itemId}.json`] = strToU8(json);
-        }
+    for (const [itemId, audioKey] of Object.entries(
+      this.doc.audioFiles ?? {},
+    )) {
+      const audioContext = new AudioContext();
+      const buffer = await loadAudio(audioKey, audioContext);
+      if (buffer) {
+        const serialized = serializeAudioBuffer(buffer);
+        const json = JSON.stringify({
+          sampleRate: serialized.sampleRate,
+          length: serialized.length,
+          numberOfChannels: serialized.numberOfChannels,
+          channelData: serialized.channelData.map((ch) => Array.from(ch)),
+        });
+        files[`audio/${itemId}.json`] = strToU8(json);
       }
     }
 
     // Create ZIP
     const zipped = zipSync(files, { level: 6 });
-    return new Blob([zipped], { type: "application/zip" });
+    const zippedCopy = new Uint8Array(zipped);
+    return new Blob([zippedCopy], { type: "application/zip" });
   }
 
   async importFromFile(file: File): Promise<void> {
@@ -397,7 +547,9 @@ class Persistence {
         throw new Error("Invalid export: missing document.automerge");
       }
 
-      const newDoc = Automerge.load<EchoChamberDoc>(docBytes);
+      const newDoc = this.ensureDocShape(
+        Automerge.load<EchoChamberDoc>(docBytes),
+      );
 
       // Clear existing audio
       const existingKeys = await getAllAudioKeys();
@@ -411,24 +563,28 @@ class Persistence {
         if (path.startsWith("audio/")) {
           const itemId = path.replace("audio/", "").replace(".json", "");
           const json = JSON.parse(strFromU8(data));
-          const channelData = json.channelData.map((ch: number[]) => new Float32Array(ch));
+          const channelData = json.channelData.map(
+            (ch: number[]) => new Float32Array(ch),
+          );
 
           const buffer = audioContext.createBuffer(
             json.numberOfChannels,
             json.length,
-            json.sampleRate
+            json.sampleRate,
           );
 
           for (let i = 0; i < json.numberOfChannels; i++) {
             buffer.copyToChannel(channelData[i], i);
           }
 
-          await saveAudio(`audio-${itemId}`, buffer);
+          const docAudioKey = newDoc.audioFiles?.[itemId] ?? `audio-${itemId}`;
+          await saveAudio(docAudioKey, buffer);
         }
       }
 
       // Replace current document
       this.doc = newDoc;
+      this.localEditsBlocked = false;
       this.saveDoc();
 
       // Reload page to apply changes
