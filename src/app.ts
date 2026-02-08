@@ -10,7 +10,7 @@ import {
 import { hotkeyRegistry } from "./soundboard.ts";
 import { persistence } from "./persistence.ts";
 import { loadAudio, setAudioStorageRoom } from "./audio-storage.ts";
-import { startSync, isConnected } from "./sync.ts";
+import { startSync, setSyncAudioEnabled } from "./sync.ts";
 import { initDeployModal } from "./deploy-modal.ts";
 import {
   setAudioSyncRoom,

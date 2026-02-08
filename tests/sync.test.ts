@@ -29,7 +29,10 @@ async function waitForPeerJoin(hostPage: Page): Promise<void> {
   });
 }
 
-async function waitForPairConnected(hostPage: Page, peerPage: Page): Promise<void> {
+async function waitForPairConnected(
+  hostPage: Page,
+  peerPage: Page,
+): Promise<void> {
   await waitForConnected(hostPage);
   await waitForConnected(peerPage);
   await waitForPeerJoin(hostPage);
@@ -81,6 +84,8 @@ test.describe("Sync", () => {
       await gotoWithRetry(peerPage, shareUrl);
       await waitForPairConnected(page, peerPage);
 
+      await createSoundboard(page, 200, 200);
+      await expect(page.locator(".soundboard-wrapper")).toHaveCount(1);
       await expect(peerPage.locator(".soundboard-wrapper")).toHaveCount(1, {
         timeout: PEER_SYNC_TIMEOUT_MS,
       });
