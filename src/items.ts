@@ -20,10 +20,14 @@ let nextId = 0;
 let usePersistenceId = false;
 
 export function generateId(): string {
+  // Use persistence ID if enabled to avoid conflicts across clients
+  if (usePersistenceId) {
+    return persistence.getNextItemId();
+  }
   return `item-${nextId++}`;
 }
 
-export function allocatePersistenceId(): number {
+export function allocatePersistenceId(): string {
   return persistence.getNextItemId();
 }
 
@@ -50,7 +54,7 @@ export function createItem(type: CanvasItem["type"], x: number, y: number, exist
       width: rect.width,
       height: rect.height,
       ...(type === "soundboard"
-        ? { name: "", hotkey: (item as any).hotkey || "", filters: { lowpass: 0, highpass: 0, reverb: 0, reversed: 0 } }
+        ? { name: (item as any).name || "", hotkey: (item as any).hotkey || "", filters: { lowpass: 0, highpass: 0, reverb: 0, reversed: 0 } }
         : { text: "Click to edit" }),
     } as any);
     console.log(`[Items] Item ${item.id} persisted to storage`);

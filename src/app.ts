@@ -1,9 +1,12 @@
 import "./canvas.ts";
 import { screenToWorld, isPanningNow, restoreViewport } from "./canvas.ts";
-import { createItem, setUsePersistenceId, type CanvasItem } from "./items.ts";
+import { createItem, removeItem, itemRegistry, setUsePersistenceId, type CanvasItem } from "./items.ts";
 import { hotkeyRegistry } from "./soundboard.ts";
 import { persistence } from "./persistence.ts";
 import { loadAudio } from "./audio-storage.ts";
+import { startSync, isConnected } from "./sync.ts";
+import { initDeployModal } from "./deploy-modal.ts";
+import { setAudioSyncRoom, markAudioKeyKnown, checkForNewAudioKeys } from "./audio-sync.ts";
 
 const container = document.getElementById("canvas-container")!;
 const btnAddSound = document.getElementById("btn-add-sound")!;
@@ -78,18 +81,47 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// --- Room code parsing ---
+
+function getRoomCodeFromURL(): string | null {
+  const match = window.location.pathname.match(/^\/([a-z0-9]{8})$/);
+  return match ? match[1]! : null;
+}
+
+// --- Connection status indicator ---
+
+function updateConnectionStatus(connected: boolean) {
+  const wrapper = document.getElementById("connection-wrapper");
+  const indicator = document.getElementById("connection-status");
+  if (wrapper && connected) {
+    wrapper.style.display = "flex";
+  }
+  if (indicator) {
+    indicator.classList.toggle("connected", connected);
+    indicator.classList.toggle("disconnected", !connected);
+    indicator.title = connected ? "Synced" : "Disconnected";
+  }
+}
+
 // --- App initialization ---
 
 async function initializeApp() {
-  const doc = persistence.getDoc();
-
   // Enable persistence ID generation
   setUsePersistenceId(true);
+
+  // Check if we're joining a room — if so, discard local state so the
+  // DO's doc becomes the single source of truth (no merge with stale local data).
+  const roomCode = getRoomCodeFromURL();
+  if (roomCode) {
+    persistence.resetForRoom();
+  }
+
+  const doc = persistence.getDoc();
 
   // Restore viewport
   restoreViewport(doc.viewport.offsetX, doc.viewport.offsetY);
 
-  // Recreate all items
+  // Recreate all items from local doc (empty when joining a room)
   const audioContext = new AudioContext();
   for (const [itemId, itemData] of Object.entries(doc.items)) {
     const item = createItem(itemData.type, itemData.x, itemData.y, itemId);
@@ -100,6 +132,9 @@ async function initializeApp() {
       let audioBuffer = null;
       if (audioKey) {
         audioBuffer = await loadAudio(audioKey, audioContext);
+        if (audioBuffer) {
+          markAudioKeyKnown(audioKey);
+        }
       }
       item.loadAudioBuffer(audioBuffer);
     }
@@ -108,6 +143,63 @@ async function initializeApp() {
   }
 
   console.log(`[App] Restored ${Object.keys(doc.items).length} items from persistence`);
+
+  // --- Sync setup ---
+  if (roomCode) {
+    persistence.enableSync();
+    setAudioSyncRoom(roomCode);
+
+    // Global subscription to reconcile DOM with remote doc changes
+    persistence.subscribeGlobal((doc) => {
+      const docItemIds = new Set(Object.keys(doc.items));
+      const registryIds = new Set(itemRegistry.keys());
+
+      console.log(`[Sync] Reconciling: doc has ${docItemIds.size} items, registry has ${registryIds.size} items`);
+      console.log(`[Sync] Doc items:`, Array.from(docItemIds));
+      console.log(`[Sync] Registry items:`, Array.from(registryIds));
+
+      // Create items that are in the doc but not in the registry (remote additions)
+      for (const itemId of docItemIds) {
+        if (!registryIds.has(itemId)) {
+          const itemData = doc.items[itemId]!;
+          console.log(`[Sync] Creating remote item ${itemId} (${itemData.type})`);
+          createItem(itemData.type, itemData.x, itemData.y, itemId);
+        }
+      }
+
+      // Remove items that are in the registry but not in the doc (remote deletions)
+      for (const itemId of registryIds) {
+        if (!docItemIds.has(itemId)) {
+          console.log(`[Sync] Removing remotely-deleted item ${itemId}`);
+          const item = itemRegistry.get(itemId);
+          if (item) {
+            if (item.cleanup) item.cleanup();
+            if ((item as any).cleanupDrag) (item as any).cleanupDrag();
+            item.element.remove();
+            itemRegistry.delete(itemId);
+          }
+        }
+      }
+
+      // Download audio for new/updated remote items
+      checkForNewAudioKeys(doc.audioFiles);
+    });
+
+    startSync({
+      roomCode,
+      getDoc: () => persistence.getDoc(),
+      applyRemoteDoc: (newDoc) => persistence.applyRemoteDoc(newDoc),
+      onConnected: () => updateConnectionStatus(true),
+      onDisconnected: () => updateConnectionStatus(false),
+    }, true); // true = joining existing room
+
+    const wrapperEl = document.getElementById("connection-wrapper");
+    if (wrapperEl) wrapperEl.style.display = "flex";
+  }
+
+  // --- Deploy modal ---
+  initDeployModal(roomCode);
+
   console.log("[App] Initialization complete");
 }
 

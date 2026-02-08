@@ -3,6 +3,7 @@ import { generateId } from "./items.ts";
 import { consumeDrag } from "./drag.ts";
 import { persistence } from "./persistence.ts";
 import { saveAudio } from "./audio-storage.ts";
+import { uploadAudio } from "./audio-sync.ts";
 
 // --- Shared audio infrastructure ---
 
@@ -199,6 +200,10 @@ export function createSoundboard(x: number, y: number, existingId?: string): Can
         // Persist audio to IndexedDB
         const audioKey = `audio-${id}`;
         await saveAudio(audioKey, audioBuffer);
+
+        // Upload to R2 before setting Automerge ref (prevents race condition)
+        await uploadAudio(id, audioBuffer);
+
         persistence.setAudioFile(id, audioKey);
       });
 
@@ -387,9 +392,9 @@ export function createSoundboard(x: number, y: number, existingId?: string): Can
       hotkeyBubble.textContent = hotkey || "—";
     }
 
-    // Update name
-    if (itemData.name && itemData.name !== nameLabel.textContent) {
-      nameLabel.textContent = itemData.name;
+    // Update name (only if not currently editing)
+    if (nameLabel.contentEditable === "false" && itemData.name !== nameLabel.textContent) {
+      nameLabel.textContent = itemData.name || `Sound ${soundCounter}`;
     }
   });
 
@@ -439,5 +444,5 @@ export function createSoundboard(x: number, y: number, existingId?: string): Can
     }
   }
 
-  return { id, type: "soundboard" as const, x, y, element: wrapper, cleanup, loadAudioBuffer, hotkey };
+  return { id, type: "soundboard" as const, x, y, element: wrapper, cleanup, loadAudioBuffer, hotkey, name: nameLabel.textContent || "" };
 }

@@ -3,8 +3,11 @@
  */
 
 import * as Automerge from "@automerge/automerge";
+import type { Doc } from "@automerge/automerge";
 import { saveAudio, loadAudio, deleteAudio, getAllAudioKeys, serializeAudioBuffer } from "./audio-storage";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import { notifyLocalChange } from "./sync";
+import { deleteAudioFromR2 } from "./audio-sync";
 
 const STORAGE_KEY = "echochamber-doc";
 const SAVE_DEBOUNCE_MS = 500;
@@ -61,6 +64,7 @@ class Persistence {
   private itemSubscribers = new Map<string, Set<ItemSubscriptionCallback>>();
   private isNotifying = false;
   private notifyTimeout: number | null = null;
+  private syncEnabled = false;
 
   constructor() {
     this.doc = this.loadDoc();
@@ -182,6 +186,57 @@ class Persistence {
     }
   }
 
+  enableSync(): void {
+    this.syncEnabled = true;
+  }
+
+  // Reset to a fresh empty doc. Used when joining a room so the DO's doc
+  // becomes the sole source of truth (no merging with stale local state).
+  resetForRoom(): void {
+    this.doc = Automerge.from({
+      metadata: {
+        version: VERSION,
+        createdAt: Date.now(),
+        lastModified: Date.now(),
+      },
+      viewport: {
+        offsetX: 0,
+        offsetY: 0,
+      },
+      items: {},
+      nextItemId: 0,
+      audioFiles: {},
+    });
+  }
+
+  getDocBytes(): Uint8Array {
+    return Automerge.save(this.doc);
+  }
+
+  applyRemoteDoc(newDoc: Doc<EchoChamberDoc>): void {
+    console.log(`[Persistence] Applying remote doc with ${Object.keys(newDoc.items).length} items`);
+    console.log(`[Persistence] Remote doc items:`, Object.keys(newDoc.items));
+
+    // Preserve local viewport offsets — each client has its own view
+    const localViewport = {
+      offsetX: this.doc.viewport.offsetX,
+      offsetY: this.doc.viewport.offsetY,
+    };
+
+    this.doc = newDoc;
+
+    // Re-apply local viewport WITHOUT triggering sync
+    // (viewport is local-only, shouldn't propagate to other clients)
+    this.doc = Automerge.change(this.doc, (doc) => {
+      doc.viewport.offsetX = localViewport.offsetX;
+      doc.viewport.offsetY = localViewport.offsetY;
+    });
+
+    this.scheduleSave();
+    this.scheduleNotify();
+    // NOTE: Do NOT call notifyLocalChange() here - we just received remote changes
+  }
+
   // New generic change method
   change(changeFn: (doc: EchoChamberDoc) => void): void {
     this.doc = Automerge.change(this.doc, (doc) => {
@@ -190,6 +245,9 @@ class Persistence {
     });
     this.scheduleSave();
     this.scheduleNotify();
+    if (this.syncEnabled) {
+      notifyLocalChange();
+    }
   }
 
   // Convenience methods
@@ -246,6 +304,7 @@ class Persistence {
   }
 
   addItem(itemId: string, data: SoundboardItemData | TextboxItemData): void {
+    console.log(`[Persistence] Adding item ${itemId} (${data.type})`);
     this.change((doc) => {
       doc.items[itemId] = data;
     });
@@ -262,18 +321,31 @@ class Persistence {
     deleteAudio(audioKey).catch((error) => {
       console.error("Failed to delete audio:", error);
     });
+
+    // Side effect: delete from R2
+    if (this.syncEnabled) {
+      deleteAudioFromR2(itemId);
+    }
   }
 
-  getNextItemId(): number {
-    let id: number;
+  getNextItemId(): string {
+    // Use actor ID + counter to ensure globally unique IDs even with concurrent creation
+    const actorId = Automerge.getActorId(this.doc);
+    let counter: number;
     this.doc = Automerge.change(this.doc, (doc) => {
-      id = doc.nextItemId;
+      counter = doc.nextItemId;
       doc.nextItemId++;
       doc.metadata.lastModified = Date.now();
     });
     this.scheduleSave();
     this.scheduleNotify();
-    return id!;
+    if (this.syncEnabled) {
+      notifyLocalChange();
+    }
+    // Create a unique ID: first 8 chars of actor + counter
+    const id = `${actorId.substring(0, 8)}-${counter!}`;
+    console.log(`[Persistence] Generated ID: ${id} (actor: ${actorId}, counter: ${counter})`);
+    return id;
   }
 
   setAudioFile(itemId: string, audioKey: string): void {

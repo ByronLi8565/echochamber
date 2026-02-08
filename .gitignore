@@ -5,6 +5,8 @@ playwright-report
 out
 dist
 *.tgz
+scratch.md
+.wrangler
 
 # code coverage
 coverage

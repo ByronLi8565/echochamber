@@ -3,6 +3,10 @@ import { persistence } from "./persistence.ts";
 
 const DRAG_THRESHOLD = 4;
 
+// Global drag state to prevent multiple items from dragging at once
+let currentlyDraggingId: string | null = null;
+let highestZIndex = 1000;
+
 export function makeDraggable(item: CanvasItem) {
   const el = item.element;
   let isDragging = false;
@@ -14,12 +18,32 @@ export function makeDraggable(item: CanvasItem) {
   let pointerId = -1;
   let unsubscribe: (() => void) | null = null;
 
+  // Initialize z-index
+  el.style.zIndex = String(highestZIndex++);
+
   el.addEventListener("pointerdown", (e) => {
     const target = e.target as HTMLElement;
     if (target.isContentEditable) return;
     if (e.button !== 0) return;
 
+    // Prevent dragging if another item is already being dragged
+    if (currentlyDraggingId && currentlyDraggingId !== item.id) {
+      return;
+    }
+
+    // Only drag if this element is on top at the click location
+    const elementsAtPoint = document.elementsFromPoint(e.clientX, e.clientY);
+    const topCanvasItem = elementsAtPoint.find((elem) => elem.classList.contains("canvas-item"));
+    if (topCanvasItem !== el) {
+      // Not the topmost item, don't drag
+      return;
+    }
+
+    // Bring this item to the front
+    el.style.zIndex = String(highestZIndex++);
+
     isDragging = true;
+    currentlyDraggingId = item.id;
     didDrag = false;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
@@ -53,6 +77,7 @@ export function makeDraggable(item: CanvasItem) {
   el.addEventListener("pointerup", (e) => {
     if (!isDragging) return;
     isDragging = false;
+    currentlyDraggingId = null;
     if (didDrag) {
       el.dataset.dragged = "1";
       el.releasePointerCapture(e.pointerId);
@@ -61,6 +86,12 @@ export function makeDraggable(item: CanvasItem) {
       persistence.updateItemPosition(item.id, item.x, item.y);
     }
     e.stopPropagation();
+  });
+
+  el.addEventListener("pointercancel", () => {
+    if (!isDragging) return;
+    isDragging = false;
+    currentlyDraggingId = null;
   });
 
   // Subscribe to position changes from Automerge
