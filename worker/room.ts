@@ -135,14 +135,7 @@ export class Room implements DurableObject {
       console.warn(
         `[Room] REJECTED sync delete: ${deletedItemIds.join(", ")}. Keeping current doc.`,
       );
-      const [updatedSyncState, replyMsg] = Automerge.generateSyncMessage(
-        doc,
-        newSyncState,
-      );
-      this.syncStates.set(ws, updatedSyncState);
-      if (replyMsg) {
-        ws.send(replyMsg as unknown as ArrayBuffer);
-      }
+      this.resyncPeer(ws);
       return;
     }
 

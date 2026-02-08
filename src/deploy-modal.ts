@@ -31,7 +31,7 @@ export function initDeployModal(currentRoomCode: string | null): void {
       const docBytes = persistence.getDocBytes();
       const response = await fetch("/api/rooms", {
         method: "POST",
-        body: docBytes.buffer as ArrayBuffer,
+        body: docBytes,
       });
 
       if (!response.ok) {
