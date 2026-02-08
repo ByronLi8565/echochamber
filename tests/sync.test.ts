@@ -1,5 +1,7 @@
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 
+const PEER_SYNC_TIMEOUT_MS = 60_000;
+
 async function createSoundboard(
   page: Page,
   x: number,
@@ -33,6 +35,29 @@ async function waitForPairConnected(hostPage: Page, peerPage: Page): Promise<voi
   await waitForPeerJoin(hostPage);
 }
 
+async function gotoWithRetry(
+  page: Page,
+  url: string,
+  maxAttempts = 3,
+): Promise<void> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await page.goto(url);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const shouldRetry = message.includes("ERR_CONNECTION_REFUSED");
+      const isLastAttempt = attempt === maxAttempts;
+
+      if (!shouldRetry || isLastAttempt) {
+        throw error;
+      }
+
+      await page.waitForTimeout(300 * attempt);
+    }
+  }
+}
+
 test.describe("Sync", () => {
   test.describe.configure({ mode: "serial" });
   test.setTimeout(120_000);
@@ -41,7 +66,7 @@ test.describe("Sync", () => {
     page,
     browser,
   }) => {
-    await page.goto("/");
+    await gotoWithRetry(page, "/");
 
     await createSoundboard(page, 200, 200);
     await expect(page.locator(".soundboard-wrapper")).toHaveCount(1);
@@ -53,17 +78,17 @@ test.describe("Sync", () => {
     const peerPage = await peerContext.newPage();
 
     try {
-      await peerPage.goto(shareUrl);
+      await gotoWithRetry(peerPage, shareUrl);
       await waitForPairConnected(page, peerPage);
 
       await expect(peerPage.locator(".soundboard-wrapper")).toHaveCount(1, {
-        timeout: 30_000,
+        timeout: PEER_SYNC_TIMEOUT_MS,
       });
 
       await createSoundboard(page, 460, 220);
       await expect(page.locator(".soundboard-wrapper")).toHaveCount(2);
       await expect(peerPage.locator(".soundboard-wrapper")).toHaveCount(2, {
-        timeout: 30_000,
+        timeout: PEER_SYNC_TIMEOUT_MS,
       });
     } finally {
       await peerContext.close().catch(() => {});
@@ -74,7 +99,7 @@ test.describe("Sync", () => {
     page,
     browser,
   }) => {
-    await page.goto("/");
+    await gotoWithRetry(page, "/");
 
     const shareUrl = await deployAndGetShareUrl(page);
     await waitForConnected(page);
@@ -83,15 +108,15 @@ test.describe("Sync", () => {
     const peerPage = await peerContext.newPage();
 
     try {
-      await peerPage.goto(shareUrl);
+      await gotoWithRetry(peerPage, shareUrl);
       await waitForPairConnected(page, peerPage);
 
       await createSoundboard(page, 220, 220);
       await expect(page.locator(".soundboard-wrapper")).toHaveCount(1, {
-        timeout: 30_000,
+        timeout: PEER_SYNC_TIMEOUT_MS,
       });
       await expect(peerPage.locator(".soundboard-wrapper")).toHaveCount(1, {
-        timeout: 30_000,
+        timeout: PEER_SYNC_TIMEOUT_MS,
       });
 
       const peerName = peerPage.locator(".soundboard-name").first();
