@@ -25,6 +25,7 @@ import {
   hideBadge,
   destroyCounterBadge,
 } from "../ui/counter-badge.ts";
+import { normalizeSoundboardFilters } from "../util/soundboard-filters.ts";
 
 // --- Shared audio infrastructure ---
 
@@ -107,6 +108,19 @@ interface FilterSet {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function areFiltersEqual(a: FilterSet, b: FilterSet): boolean {
+  return (
+    a.speedRate === b.speedRate &&
+    a.reverbIntensity === b.reverbIntensity &&
+    a.reversed === b.reversed &&
+    a.playConcurrently === b.playConcurrently &&
+    a.loopEnabled === b.loopEnabled &&
+    a.loopDelaySeconds === b.loopDelaySeconds &&
+    a.repeatCount === b.repeatCount &&
+    a.repeatDelaySeconds === b.repeatDelaySeconds
+  );
 }
 
 function parseCssColorToRgb(
@@ -893,53 +907,22 @@ export function createSoundboard(
     if (!itemData || itemData.type !== "soundboard") return;
 
     // Update settings/filters
-    const legacySlowIntensity = clamp(
-      Number(itemData.filters.slowIntensity ?? itemData.filters.lowpass ?? 0),
-      0,
-      1,
-    );
-    const legacySpeedIntensity = clamp(
-      Number(itemData.filters.speedIntensity ?? itemData.filters.highpass ?? 0),
-      0,
-      1,
-    );
-    const legacyDerivedSpeedRate = clamp(
-      (1 - 0.45 * legacySlowIntensity) * (1 + 0.75 * legacySpeedIntensity),
-      0.5,
-      1.75,
+    const normalized = normalizeSoundboardFilters(
+      itemData.filters as unknown as Record<string, unknown>,
     );
     const newFilters: FilterSet = {
-      speedRate: clamp(
-        Number(itemData.filters.speedRate ?? legacyDerivedSpeedRate),
-        0.5,
-        1.75,
-      ),
-      reverbIntensity: clamp(
-        Number(
-          itemData.filters.reverbIntensity ?? itemData.filters.reverb ?? 0,
-        ),
-        0,
-        1,
-      ),
-      reversed: Number(itemData.filters.reversed ?? 0) > 0,
-      playConcurrently: Number(itemData.filters.playConcurrently ?? 0) > 0,
-      loopEnabled: Number(itemData.filters.loopEnabled ?? 0) > 0,
-      loopDelaySeconds: Math.max(
-        0,
-        Number(itemData.filters.loopDelaySeconds ?? 0),
-      ),
-      repeatCount: Math.max(
-        1,
-        Math.round(Number(itemData.filters.repeatCount ?? 1)),
-      ),
-      repeatDelaySeconds: Math.max(
-        0,
-        Number(itemData.filters.repeatDelaySeconds ?? 0),
-      ),
+      speedRate: normalized.speedRate,
+      reverbIntensity: normalized.reverbIntensity,
+      reversed: normalized.reversed > 0,
+      playConcurrently: normalized.playConcurrently > 0,
+      loopEnabled: normalized.loopEnabled > 0,
+      loopDelaySeconds: normalized.loopDelaySeconds,
+      repeatCount: normalized.repeatCount,
+      repeatDelaySeconds: normalized.repeatDelaySeconds,
     };
 
     const wasReversed = filters.reversed;
-    if (JSON.stringify(filters) !== JSON.stringify(newFilters)) {
+    if (!areFiltersEqual(filters, newFilters)) {
       Object.assign(filters, newFilters);
       if (wasReversed !== newFilters.reversed) {
         reversedCache = null;

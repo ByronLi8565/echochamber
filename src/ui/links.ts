@@ -1,9 +1,12 @@
 import { consumeDrag } from "../core/drag.ts";
 import { persistence } from "../sync/persistence.ts";
+import {
+  getSequentialSoundboardSteps,
+  type SequentialPlaybackStep,
+} from "../util/soundboard-graph.ts";
 
 type ModeChangeCallback = (active: boolean) => void;
 type PlaybackHandler = (fromRemote: boolean) => number;
-type SequentialPlaybackStep = { itemId: string; parentId: string | null };
 
 const playbackHandlers = new Map<string, PlaybackHandler>();
 let linkMode = false;
@@ -222,7 +225,9 @@ export function exitLinkMode(): void {
 }
 
 export function initLinksTool(): void {
-  btnLink = document.getElementById("btn-link-mode") as HTMLButtonElement | null;
+  btnLink = document.getElementById(
+    "btn-link-mode",
+  ) as HTMLButtonElement | null;
   const container = document.getElementById("canvas-container");
   if (!btnLink || !container) {
     console.warn("[Links] Link tool elements not found in DOM");
@@ -287,8 +292,9 @@ export function initLinksTool(): void {
   scheduleRender();
 }
 
-export function invalidateLinksOverlay(): void {
-  scheduleRender();
+export function invalidateLinksOverlay(eager = false): void {
+  if (eager) renderLinksOverlay();
+  else scheduleRender();
 }
 
 export function registerSoundboardPlayback(
@@ -365,52 +371,15 @@ function isConcurrentPlaybackEnabled(itemId: string): boolean {
   return Number(item.filters.playConcurrently ?? 0) > 0;
 }
 
-function buildSequentialPlaybackSteps(originItemId: string): SequentialPlaybackStep[] {
+function buildSequentialPlaybackSteps(
+  originItemId: string,
+): SequentialPlaybackStep[] {
   const doc = persistence.getDoc();
-  if (doc.items?.[originItemId]?.type !== "soundboard") {
-    return [{ itemId: originItemId, parentId: null }];
-  }
-
-  const adjacency = new Map<string, Set<string>>();
-  const addNeighbor = (from: string, to: string): void => {
-    let neighbors = adjacency.get(from);
-    if (!neighbors) {
-      neighbors = new Set<string>();
-      adjacency.set(from, neighbors);
-    }
-    neighbors.add(to);
-  };
-
-  for (const { itemA, itemB } of persistence.getLinks()) {
-    if (
-      doc.items?.[itemA]?.type !== "soundboard" ||
-      doc.items?.[itemB]?.type !== "soundboard"
-    ) {
-      continue;
-    }
-    addNeighbor(itemA, itemB);
-    addNeighbor(itemB, itemA);
-  }
-
-  const steps: SequentialPlaybackStep[] = [
-    { itemId: originItemId, parentId: null },
-  ];
-  const visited = new Set<string>([originItemId]);
-  const queue: string[] = [originItemId];
-
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (!current) continue;
-    const neighbors = Array.from(adjacency.get(current) ?? []).sort();
-    for (const neighbor of neighbors) {
-      if (visited.has(neighbor)) continue;
-      visited.add(neighbor);
-      queue.push(neighbor);
-      steps.push({ itemId: neighbor, parentId: current });
-    }
-  }
-
-  return steps;
+  return getSequentialSoundboardSteps(
+    doc.items ?? {},
+    persistence.getLinks(),
+    originItemId,
+  );
 }
 
 /**

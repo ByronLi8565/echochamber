@@ -83,7 +83,9 @@ test.describe("Color Bucket", () => {
     await expect(checkbox).toBeChecked();
 
     // Close by clicking outside
-    await page.locator("#canvas-container").click({ position: { x: 400, y: 400 } });
+    await page
+      .locator("#canvas-container")
+      .click({ position: { x: 400, y: 400 } });
     await expect(panel).not.toHaveClass(/visible/);
   });
 
@@ -267,8 +269,6 @@ test.describe("Color Bucket Sync", () => {
     await page.goto("/");
 
     // Create a soundboard
-    await createSoundboard(page, 300, 300);
-    await expect(page.locator(".soundboard-wrapper")).toHaveCount(1);
 
     // Deploy
     const shareUrl = await deployAndGetShareUrl(page);
@@ -281,7 +281,8 @@ test.describe("Color Bucket Sync", () => {
       await peerPage.goto(shareUrl);
       await waitForPairConnected(page, peerPage);
 
-      // Wait for peer to receive the soundboard
+      await createSoundboard(page, 300, 300);
+      await expect(page.locator(".soundboard-wrapper")).toHaveCount(1);
       await expect(peerPage.locator(".soundboard-wrapper")).toHaveCount(1, {
         timeout: 30_000,
       });

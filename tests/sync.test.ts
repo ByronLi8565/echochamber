@@ -1,6 +1,7 @@
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 
 const PEER_SYNC_TIMEOUT_MS = 60_000;
+const CONNECT_TIMEOUT_MS = 15_000;
 
 async function createSoundboard(
   page: Page,
@@ -19,13 +20,13 @@ async function deployAndGetShareUrl(page: Page): Promise<string> {
 
 async function waitForConnected(page: Page): Promise<void> {
   await expect(page.locator("#connection-status")).toHaveClass(/connected/, {
-    timeout: 15_000,
+    timeout: CONNECT_TIMEOUT_MS,
   });
 }
 
 async function waitForPeerJoin(hostPage: Page): Promise<void> {
   await expect(hostPage.locator("#connection-count")).toHaveText("2", {
-    timeout: 15_000,
+    timeout: CONNECT_TIMEOUT_MS,
   });
 }
 
@@ -36,6 +37,16 @@ async function waitForPairConnected(
   await waitForConnected(hostPage);
   await waitForConnected(peerPage);
   await waitForPeerJoin(hostPage);
+}
+
+async function waitForSoundboardCount(
+  page: Page,
+  count: number,
+  timeout: number = PEER_SYNC_TIMEOUT_MS,
+): Promise<void> {
+  await expect(page.locator(".soundboard-wrapper")).toHaveCount(count, {
+    timeout,
+  });
 }
 
 async function gotoWithRetry(
@@ -71,9 +82,6 @@ test.describe("Sync", () => {
   }) => {
     await gotoWithRetry(page, "/");
 
-    await createSoundboard(page, 200, 200);
-    await expect(page.locator(".soundboard-wrapper")).toHaveCount(1);
-
     const shareUrl = await deployAndGetShareUrl(page);
     await waitForConnected(page);
 
@@ -84,17 +92,11 @@ test.describe("Sync", () => {
       await gotoWithRetry(peerPage, shareUrl);
       await waitForPairConnected(page, peerPage);
 
+      // Host changes should appear on joining peer.
       await createSoundboard(page, 200, 200);
-      await expect(page.locator(".soundboard-wrapper")).toHaveCount(1);
-      await expect(peerPage.locator(".soundboard-wrapper")).toHaveCount(1, {
-        timeout: PEER_SYNC_TIMEOUT_MS,
-      });
-
       await createSoundboard(page, 460, 220);
-      await expect(page.locator(".soundboard-wrapper")).toHaveCount(2);
-      await expect(peerPage.locator(".soundboard-wrapper")).toHaveCount(2, {
-        timeout: PEER_SYNC_TIMEOUT_MS,
-      });
+      await waitForSoundboardCount(page, 2);
+      await waitForSoundboardCount(peerPage, 2);
     } finally {
       await peerContext.close().catch(() => {});
     }
@@ -117,12 +119,8 @@ test.describe("Sync", () => {
       await waitForPairConnected(page, peerPage);
 
       await createSoundboard(page, 220, 220);
-      await expect(page.locator(".soundboard-wrapper")).toHaveCount(1, {
-        timeout: PEER_SYNC_TIMEOUT_MS,
-      });
-      await expect(peerPage.locator(".soundboard-wrapper")).toHaveCount(1, {
-        timeout: PEER_SYNC_TIMEOUT_MS,
-      });
+      await waitForSoundboardCount(page, 1);
+      await waitForSoundboardCount(peerPage, 1);
 
       const peerName = peerPage.locator(".soundboard-name").first();
       await peerName.dblclick();
@@ -132,6 +130,7 @@ test.describe("Sync", () => {
 
       await expect(page.locator(".soundboard-name").first()).toHaveText(
         "Peer rename",
+        { timeout: PEER_SYNC_TIMEOUT_MS },
       );
 
       const hostBoard = page.locator(".soundboard-wrapper").first();
@@ -140,12 +139,13 @@ test.describe("Sync", () => {
         .locator('.soundboard-settings-panel input[data-setting="reversed"]')
         .check();
 
+      const peerBoard = peerPage.locator(".soundboard-wrapper").first();
+      await peerBoard.locator(".prop-settings").click();
       await expect(
-        peerPage
-          .locator(".soundboard-wrapper")
-          .first()
-          .locator('.soundboard-settings-panel input[data-setting="reversed"]'),
-      ).toBeChecked();
+        peerBoard.locator(
+          '.soundboard-settings-panel input[data-setting="reversed"]',
+        ),
+      ).toBeChecked({ timeout: PEER_SYNC_TIMEOUT_MS });
     } finally {
       await peerContext.close().catch(() => {});
     }

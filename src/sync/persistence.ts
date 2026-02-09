@@ -14,15 +14,13 @@ import {
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 import { notifyLocalChange, requestDeleteIntent } from "./sync.ts";
 import { deleteAudioFromR2 } from "./audio-sync.ts";
+import { normalizeSoundboardFilters } from "../util/soundboard-filters.ts";
+import { getConnectedSoundboardIds } from "../util/soundboard-graph.ts";
 
 const STORAGE_KEY = "echochamber-doc";
 const VIEWPORT_STORAGE_KEY = "echochamber-viewport";
 const SAVE_DEBOUNCE_MS = 500;
 const VERSION = "1.0.0";
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
 
 interface ThemeData {
   backgroundColor?: string;
@@ -217,37 +215,9 @@ class Persistence {
 
     for (const item of Object.values(mutableDoc.items)) {
       if (!item || item.type !== "soundboard") continue;
-      const rawFilters = item.filters as Record<string, unknown> | undefined;
-      const lowpass = Number(rawFilters?.lowpass ?? 0);
-      const highpass = Number(rawFilters?.highpass ?? 0);
-      const legacySlowIntensity = Number(rawFilters?.slowIntensity ?? 0);
-      const legacySpeedIntensity = Number(rawFilters?.speedIntensity ?? 0);
-      const legacyReverb = Number(rawFilters?.reverb ?? 0);
-      const reversed = Number(rawFilters?.reversed ?? 0);
-
-      const readNumber = (key: string, fallback: number): number => {
-        const value = Number(rawFilters?.[key]);
-        return Number.isFinite(value) ? value : fallback;
-      };
-
-      const normalizedSlow = clamp(readNumber("slowIntensity", lowpass > 0 ? 1 : legacySlowIntensity), 0, 1);
-      const normalizedSpeed = clamp(readNumber("speedIntensity", highpass > 0 ? 1 : legacySpeedIntensity), 0, 1);
-      const derivedSpeedRate = clamp(
-        (1 - 0.45 * normalizedSlow) * (1 + 0.75 * normalizedSpeed),
-        0.5,
-        1.75,
+      item.filters = normalizeSoundboardFilters(
+        item.filters as unknown as Record<string, unknown> | undefined,
       );
-
-      item.filters = {
-        speedRate: clamp(readNumber("speedRate", derivedSpeedRate), 0.5, 1.75),
-        reverbIntensity: readNumber("reverbIntensity", legacyReverb > 0 ? 1 : 0),
-        reversed: reversed > 0 ? 1 : 0,
-        playConcurrently: readNumber("playConcurrently", 0) > 0 ? 1 : 0,
-        loopEnabled: readNumber("loopEnabled", 0) > 0 ? 1 : 0,
-        loopDelaySeconds: Math.max(0, readNumber("loopDelaySeconds", 0)),
-        repeatCount: Math.max(1, Math.round(readNumber("repeatCount", 1))),
-        repeatDelaySeconds: Math.max(0, readNumber("repeatDelaySeconds", 0)),
-      };
     }
   }
 
@@ -663,44 +633,7 @@ class Persistence {
   }
 
   getLinkedSoundboardIds(itemId: string): string[] {
-    if (!this.isSoundboardInDoc(this.doc, itemId)) return [];
-
-    const adjacency = new Map<string, Set<string>>();
-    const addNeighbor = (from: string, to: string): void => {
-      let neighbors = adjacency.get(from);
-      if (!neighbors) {
-        neighbors = new Set<string>();
-        adjacency.set(from, neighbors);
-      }
-      neighbors.add(to);
-    };
-
-    for (const { itemA, itemB } of this.getLinks()) {
-      if (
-        !this.isSoundboardInDoc(this.doc, itemA) ||
-        !this.isSoundboardInDoc(this.doc, itemB)
-      ) {
-        continue;
-      }
-      addNeighbor(itemA, itemB);
-      addNeighbor(itemB, itemA);
-    }
-
-    const visited = new Set<string>([itemId]);
-    const queue: string[] = [itemId];
-    while (queue.length > 0) {
-      const current = queue.shift();
-      if (!current) continue;
-      const neighbors = adjacency.get(current);
-      if (!neighbors) continue;
-      for (const neighbor of neighbors) {
-        if (visited.has(neighbor)) continue;
-        visited.add(neighbor);
-        queue.push(neighbor);
-      }
-    }
-
-    return Array.from(visited);
+    return getConnectedSoundboardIds(this.doc.items ?? {}, this.getLinks(), itemId);
   }
 
   updateLinkedLoopRepeatSettings(

@@ -1,6 +1,10 @@
 import { persistence } from "../sync/persistence.ts";
 import { isSyncColorsEnabled, onSyncColorsChange } from "./settings.ts";
 import { invalidateLinksOverlay } from "./links.ts";
+import {
+  getReadableTextColor,
+  updateSoundboardAdaptiveTextColor,
+} from "../core/soundboard.ts";
 
 let paintMode = false;
 let selectedColor = "#ff6b6b";
@@ -41,6 +45,28 @@ export function exitPaintMode(): void {
   }
 }
 
+function applyImmediateBubblePaint(
+  wrapper: HTMLElement,
+  bubble: HTMLElement,
+  color: string,
+): void {
+  const controls = wrapper.querySelectorAll(
+    ".prop-bubble, .soundboard-action",
+  ) as NodeListOf<HTMLElement>;
+  const controlTextColor = getReadableTextColor(color) ?? "";
+
+  bubble.style.background = color;
+  bubble.style.borderColor = color;
+
+  for (const control of controls) {
+    control.style.background = color;
+    control.style.borderColor = color;
+    control.style.color = controlTextColor;
+  }
+
+  updateSoundboardAdaptiveTextColor();
+}
+
 function enterPaintMode(): void {
   paintMode = true;
   btnBucket?.classList.add("active");
@@ -67,8 +93,12 @@ function enterPaintMode(): void {
       ) as HTMLElement | null;
       const itemId = wrapper?.dataset.itemId;
       if (itemId) {
+        invalidateLinksOverlay(true);
+        if (wrapper) {
+          applyImmediateBubblePaint(wrapper, bubble, selectedColor);
+        }
         persistence.updateItemColor(itemId, selectedColor);
-        invalidateLinksOverlay();
+        exitPaintMode();
       }
       return;
     }
@@ -81,8 +111,15 @@ function enterPaintMode(): void {
       e.stopPropagation();
       e.stopImmediatePropagation();
 
+      document.body.style.background = selectedColor;
+      if (canvasContainer instanceof HTMLElement) {
+        canvasContainer.style.background = selectedColor;
+      }
       persistence.updateBackgroundColor(selectedColor);
-      invalidateLinksOverlay();
+      requestAnimationFrame(() => {
+        invalidateLinksOverlay();
+      });
+      exitPaintMode();
       return;
     }
 
@@ -108,7 +145,9 @@ function updateBucketEnabled(enabled: boolean): void {
 
 function updateBucketColorIndicator(): void {
   if (!btnBucket) return;
-  const bucketIcon = btnBucket.querySelector(".bucket-icon") as SVGElement | null;
+  const bucketIcon = btnBucket.querySelector(
+    ".bucket-icon",
+  ) as SVGElement | null;
   if (bucketIcon) {
     bucketIcon.style.color = selectedColor;
   }

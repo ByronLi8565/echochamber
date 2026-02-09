@@ -1,7 +1,12 @@
 import { persistence } from "../sync/persistence.ts";
 import { startSync } from "../sync/sync.ts";
-import { setAudioSyncRoom, uploadAllExistingAudio } from "../sync/audio-sync.ts";
+import {
+  checkForNewAudioKeys,
+  setAudioSyncRoom,
+  uploadAllExistingAudio,
+} from "../sync/audio-sync.ts";
 import { setAudioStorageRoom } from "../sync/audio-storage.ts";
+import { createItem, itemRegistry } from "../core/items.ts";
 
 export function initDeployModal(currentRoomCode: string | null): void {
   const btnDeploy = document.getElementById("btn-deploy")!;
@@ -15,6 +20,7 @@ export function initDeployModal(currentRoomCode: string | null): void {
   ) as HTMLButtonElement | null;
   const btnCopy = document.getElementById("deploy-modal-copy")!;
   const btnClose = document.getElementById("deploy-modal-close")!;
+  let syncReconcilerInitialized = false;
 
   const updateModalMode = (): void => {
     const isShared = !!currentRoomCode;
@@ -65,6 +71,38 @@ export function initDeployModal(currentRoomCode: string | null): void {
     // Update URL without reload
     history.pushState(null, "", `/${roomCode}`);
 
+    // Keep DOM state reconciled with remote sync updates when entering a room via Deploy.
+    if (!syncReconcilerInitialized) {
+      persistence.subscribeGlobal((doc) => {
+        const docItemIds = new Set(Object.keys(doc.items ?? {}));
+        const registryIds = new Set(itemRegistry.keys());
+
+        // Create items that are in the doc but not in the registry (remote additions)
+        for (const itemId of docItemIds) {
+          if (!registryIds.has(itemId)) {
+            const itemData = doc.items[itemId];
+            if (!itemData) continue;
+            createItem(itemData.type, itemData.x, itemData.y, itemId);
+          }
+        }
+
+        // Remove items that are in the registry but not in the doc (remote deletions)
+        for (const itemId of registryIds) {
+          if (docItemIds.has(itemId)) continue;
+          const item = itemRegistry.get(itemId);
+          if (!item) continue;
+          if (item.cleanup) item.cleanup();
+          if ((item as any).cleanupDrag) (item as any).cleanupDrag();
+          item.element.remove();
+          itemRegistry.delete(itemId);
+        }
+
+        // Download audio for new/updated remote items
+        checkForNewAudioKeys(doc.audioFiles ?? {});
+      });
+      syncReconcilerInitialized = true;
+    }
+
     // Enable sync
     persistence.enableSync();
     startSync(
@@ -72,6 +110,10 @@ export function initDeployModal(currentRoomCode: string | null): void {
         roomCode,
         getDoc: () => persistence.getDoc(),
         applyRemoteDoc: (newDoc) => persistence.applyRemoteDoc(newDoc),
+        onRemoteAudioPlay: (itemId) => {
+          const item = itemRegistry.get(itemId);
+          item?.play?.(true);
+        },
         onConnected: () => {
           const wrapper = document.getElementById("connection-wrapper");
           const indicator = document.getElementById("connection-status");
