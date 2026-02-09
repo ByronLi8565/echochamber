@@ -1,5 +1,5 @@
 import type { CanvasItem } from "./items.ts";
-import { persistence } from "./persistence.ts";
+import { persistence } from "../sync/persistence.ts";
 
 const DRAG_THRESHOLD = 4;
 

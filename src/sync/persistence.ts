@@ -10,10 +10,10 @@ import {
   deleteAudio,
   getAllAudioKeys,
   serializeAudioBuffer,
-} from "./audio-storage";
+} from "./audio-storage.ts";
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { notifyLocalChange, requestDeleteIntent } from "./sync";
-import { deleteAudioFromR2 } from "./audio-sync";
+import { notifyLocalChange, requestDeleteIntent } from "./sync.ts";
+import { deleteAudioFromR2 } from "./audio-sync.ts";
 
 const STORAGE_KEY = "echochamber-doc";
 const VIEWPORT_STORAGE_KEY = "echochamber-viewport";

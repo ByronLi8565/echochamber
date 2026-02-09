@@ -16,7 +16,7 @@ export const automergeWasmFix: BunPlugin = {
 
 export async function buildClient(): Promise<boolean> {
   const result = await Bun.build({
-    entrypoints: ["./src/index.html"],
+    entrypoints: ["./src/ui/index.html"],
     outdir: "./dist",
     plugins: [automergeWasmFix],
   });

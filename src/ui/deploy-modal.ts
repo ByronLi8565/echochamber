@@ -1,7 +1,7 @@
-import { persistence } from "./persistence.ts";
-import { startSync } from "./sync.ts";
-import { setAudioSyncRoom, uploadAllExistingAudio } from "./audio-sync.ts";
-import { setAudioStorageRoom } from "./audio-storage.ts";
+import { persistence } from "../sync/persistence.ts";
+import { startSync } from "../sync/sync.ts";
+import { setAudioSyncRoom, uploadAllExistingAudio } from "../sync/audio-sync.ts";
+import { setAudioStorageRoom } from "../sync/audio-storage.ts";
 
 export function initDeployModal(currentRoomCode: string | null): void {
   const btnDeploy = document.getElementById("btn-deploy")!;

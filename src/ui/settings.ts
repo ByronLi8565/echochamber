@@ -1,4 +1,4 @@
-import { forceResync, setSyncAudioEnabled } from "./sync.ts";
+import { forceResync, setSyncAudioEnabled } from "../sync/sync.ts";
 
 const SYNC_COLORS_KEY = "echochamber-sync-colors";
 const SYNC_AUDIO_KEY = "echochamber-sync-audio-enabled";

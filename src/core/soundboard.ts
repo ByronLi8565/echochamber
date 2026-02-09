@@ -1,30 +1,30 @@
 import type { CanvasItem } from "./items.ts";
 import { duplicateItem, generateId, removeItem } from "./items.ts";
 import { consumeDrag } from "./drag.ts";
-import { persistence } from "./persistence.ts";
-import { saveAudio, deleteAudio } from "./audio-storage.ts";
-import { uploadAudio } from "./audio-sync.ts";
-import { sendAudioPlayEvent } from "./sync.ts";
+import { persistence } from "../sync/persistence.ts";
+import { saveAudio, deleteAudio } from "../sync/audio-storage.ts";
+import { uploadAudio } from "../sync/audio-sync.ts";
+import { sendAudioPlayEvent } from "../sync/sync.ts";
 import {
   registerSoundboardPlayback,
   requestLinkedPlayback,
   unregisterSoundboardPlayback,
   getLinkedCount,
-} from "./links.ts";
+} from "../ui/links.ts";
 import {
   animateProgress,
   resetProgress,
   showLoopingAnimation,
   clearProgress,
   destroyProgressRing,
-} from "./progress-ring.ts";
+} from "../ui/progress-ring.ts";
 import {
   showRepeatBadge,
   showLoopBadge,
   showLinkBadge,
   hideBadge,
   destroyCounterBadge,
-} from "./counter-badge.ts";
+} from "../ui/counter-badge.ts";
 
 // --- Shared audio infrastructure ---
 

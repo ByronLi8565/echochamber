@@ -4,8 +4,8 @@
  */
 
 import { Effect, Schedule, pipe } from "effect";
-import { saveAudio, loadAudio } from "./audio-storage";
-import { itemRegistry } from "./items";
+import { saveAudio, loadAudio } from "./audio-storage.ts";
+import { itemRegistry } from "../core/items.ts";
 
 // --- Module state ---
 

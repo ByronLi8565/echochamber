@@ -1,6 +1,6 @@
 import type { CanvasItem } from "./items.ts";
 import { generateId } from "./items.ts";
-import { persistence } from "./persistence.ts";
+import { persistence } from "../sync/persistence.ts";
 
 export function createTextbox(x: number, y: number, existingId?: string): CanvasItem {
   const id = existingId || generateId();

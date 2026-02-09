@@ -18,32 +18,32 @@ import {
   hotkeyRegistry,
   updateSoundboardAdaptiveTextColor,
 } from "./soundboard.ts";
-import { persistence } from "./persistence.ts";
-import { loadAudio, setAudioStorageRoom } from "./audio-storage.ts";
-import { startSync } from "./sync.ts";
-import { initDeployModal } from "./deploy-modal.ts";
+import { persistence } from "../sync/persistence.ts";
+import { loadAudio, setAudioStorageRoom } from "../sync/audio-storage.ts";
+import { startSync } from "../sync/sync.ts";
+import { initDeployModal } from "../ui/deploy-modal.ts";
 import {
   setAudioSyncRoom,
   markAudioKeyKnown,
   checkForNewAudioKeys,
-} from "./audio-sync.ts";
+} from "../sync/audio-sync.ts";
 import {
   initColorBucket,
   exitPaintMode,
   onPaintModeChange,
-} from "./color-bucket.ts";
+} from "../ui/color-bucket.ts";
 import {
   initLinksTool,
   exitLinkMode,
   onLinkModeChange,
   invalidateLinksOverlay,
-} from "./links.ts";
+} from "../ui/links.ts";
 import {
   initSettings,
   isSyncColorsEnabled,
   onSyncColorsChange,
-} from "./settings.ts";
-import type { ThemeData } from "./persistence.ts";
+} from "../ui/settings.ts";
+import type { ThemeData } from "../sync/persistence.ts";
 
 const container = document.getElementById("canvas-container")!;
 const btnAddSound = document.getElementById("btn-add-sound")!;

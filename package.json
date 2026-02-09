@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "bun build src/index.html --outdir dist",
+    "build": "bun build src/ui/index.html --outdir dist",
     "build:client": "bun run build-client.ts",
     "dev": "bun run build:client && wrangler dev",
     "deploy": "bun run build:client && wrangler deploy",

@@ -2,9 +2,9 @@ import { addItemToCanvas } from "./canvas.ts";
 import { makeDraggable } from "./drag.ts";
 import { createSoundboard } from "./soundboard.ts";
 import { createTextbox } from "./textbox.ts";
-import { persistence } from "./persistence.ts";
-import { loadAudio, saveAudio } from "./audio-storage.ts";
-import { uploadAudio } from "./audio-sync.ts";
+import { persistence } from "../sync/persistence.ts";
+import { loadAudio, saveAudio } from "../sync/audio-storage.ts";
+import { uploadAudio } from "../sync/audio-sync.ts";
 
 export interface CanvasItem {
   id: string;

@@ -1,5 +1,5 @@
-import { consumeDrag } from "./drag.ts";
-import { persistence } from "./persistence.ts";
+import { consumeDrag } from "../core/drag.ts";
+import { persistence } from "../sync/persistence.ts";
 
 type ModeChangeCallback = (active: boolean) => void;
 type PlaybackHandler = (fromRemote: boolean) => number;

@@ -1,4 +1,4 @@
-import { persistence } from "./persistence.ts";
+import { persistence } from "../sync/persistence.ts";
 
 const container = document.getElementById("canvas-container")!;
 const world = document.getElementById("canvas-world")!;

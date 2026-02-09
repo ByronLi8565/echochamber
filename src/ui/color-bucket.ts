@@ -1,4 +1,4 @@
-import { persistence } from "./persistence.ts";
+import { persistence } from "../sync/persistence.ts";
 import { isSyncColorsEnabled, onSyncColorsChange } from "./settings.ts";
 import { invalidateLinksOverlay } from "./links.ts";
 
