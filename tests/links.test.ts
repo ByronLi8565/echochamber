@@ -229,7 +229,7 @@ test.describe("Links", () => {
       .toBe(true);
   });
 
-  test("loop and repeat settings propagate to linked bubbles", async ({
+  test("linked playback settings propagate to linked bubbles", async ({
     page,
   }) => {
     await page.goto("/");
@@ -247,6 +247,18 @@ test.describe("Links", () => {
 
     const firstPanel = firstBoard.locator(".soundboard-settings-panel");
     const secondPanel = secondBoard.locator(".soundboard-settings-panel");
+
+    await expect(
+      firstPanel.locator('input[data-setting="playConcurrently"]'),
+    ).not.toBeChecked();
+    await expect(
+      secondPanel.locator('input[data-setting="playConcurrently"]'),
+    ).not.toBeChecked();
+
+    await firstPanel.locator('input[data-setting="playConcurrently"]').check();
+    await expect(
+      secondPanel.locator('input[data-setting="playConcurrently"]'),
+    ).toBeChecked();
 
     await firstPanel.locator('input[data-setting="loopEnabled"]').check();
     await expect(secondPanel.locator('input[data-setting="loopEnabled"]')).toBeChecked();

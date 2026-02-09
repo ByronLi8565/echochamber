@@ -82,6 +82,7 @@ export function createItem(
               speedRate: 1,
               reverbIntensity: 0,
               reversed: 0,
+              playConcurrently: 0,
               loopEnabled: 0,
               loopDelaySeconds: 0,
               repeatCount: 1,

@@ -526,9 +526,10 @@ body {
 }
 
 .soundboard-name[contenteditable="true"] {
-    border-color: var(--border-primary);
-    background: var(--bg-input);
-    color: var(--text-primary);
+    border-color: var(--soundboard-name-edit-border, var(--border-primary));
+    background: var(--soundboard-name-edit-bg, var(--bg-input));
+    color: inherit;
+    caret-color: currentColor;
     cursor: text;
 }
 

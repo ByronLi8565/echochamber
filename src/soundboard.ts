@@ -98,6 +98,7 @@ interface FilterSet {
   speedRate: number;
   reverbIntensity: number;
   reversed: boolean;
+  playConcurrently: boolean;
   loopEnabled: boolean;
   loopDelaySeconds: number;
   repeatCount: number;
@@ -180,6 +181,14 @@ export function updateSoundboardAdaptiveTextColor(): void {
     ? getComputedStyle(canvasContainer).backgroundColor
     : getComputedStyle(document.body).backgroundColor;
   const labelTextColor = getReadableTextColor(labelBackground);
+  const editLabelBackground =
+    labelTextColor === "#ffffff"
+      ? "rgba(0, 0, 0, 0.55)"
+      : "rgba(255, 255, 255, 0.92)";
+  const editLabelBorderColor =
+    labelTextColor === "#ffffff"
+      ? "rgba(255, 255, 255, 0.35)"
+      : "rgba(0, 0, 0, 0.2)";
 
   for (const wrapper of wrappers) {
     const bubble = wrapper.querySelector(
@@ -198,6 +207,14 @@ export function updateSoundboardAdaptiveTextColor(): void {
     ) as HTMLElement | null;
     if (nameLabel && labelTextColor) {
       nameLabel.style.color = labelTextColor;
+      nameLabel.style.setProperty(
+        "--soundboard-name-edit-bg",
+        editLabelBackground,
+      );
+      nameLabel.style.setProperty(
+        "--soundboard-name-edit-border",
+        editLabelBorderColor,
+      );
     }
   }
 }
@@ -279,6 +296,7 @@ export function createSoundboard(
     speedRate: 1,
     reverbIntensity: 0,
     reversed: false,
+    playConcurrently: false,
     loopEnabled: false,
     loopDelaySeconds: 0,
     repeatCount: 1,
@@ -313,6 +331,10 @@ export function createSoundboard(
     <label class="soundboard-setting-row checkbox">
       <input type="checkbox" data-setting="reversed" />
       <span>Reversed sound</span>
+    </label>
+    <label class="soundboard-setting-row checkbox">
+      <input type="checkbox" data-setting="playConcurrently" />
+      <span>Play concurrently</span>
     </label>
     <label class="soundboard-setting-row checkbox">
       <input type="checkbox" data-setting="loopEnabled" />
@@ -373,6 +395,9 @@ export function createSoundboard(
   ) as HTMLInputElement;
   const reversedInput = settingsPanel.querySelector(
     'input[data-setting="reversed"]',
+  ) as HTMLInputElement;
+  const playConcurrentlyInput = settingsPanel.querySelector(
+    'input[data-setting="playConcurrently"]',
   ) as HTMLInputElement;
   const loopEnabledInput = settingsPanel.querySelector(
     'input[data-setting="loopEnabled"]',
@@ -448,6 +473,7 @@ export function createSoundboard(
     speedRateInput.value = String(filters.speedRate);
     reverbIntensityInput.value = String(filters.reverbIntensity);
     reversedInput.checked = filters.reversed;
+    playConcurrentlyInput.checked = filters.playConcurrently;
     loopEnabledInput.checked = filters.loopEnabled;
     loopDelayInput.value = String(filters.loopDelaySeconds);
     repeatCountInput.value = String(filters.repeatCount);
@@ -461,6 +487,7 @@ export function createSoundboard(
       speedRate: filters.speedRate,
       reverbIntensity: filters.reverbIntensity,
       reversed: filters.reversed ? 1 : 0,
+      playConcurrently: filters.playConcurrently ? 1 : 0,
       loopEnabled: filters.loopEnabled ? 1 : 0,
       loopDelaySeconds: filters.loopDelaySeconds,
       repeatCount: filters.repeatCount,
@@ -470,6 +497,7 @@ export function createSoundboard(
 
   function persistLinkedLoopRepeatSettings(): void {
     persistence.updateLinkedLoopRepeatSettings(id, {
+      playConcurrently: filters.playConcurrently ? 1 : 0,
       loopEnabled: filters.loopEnabled ? 1 : 0,
       loopDelaySeconds: filters.loopDelaySeconds,
       repeatCount: filters.repeatCount,
@@ -553,8 +581,8 @@ export function createSoundboard(
   }
 
   // --- Playback (async, overlapping) ---
-  function playSoundDirect(fromRemote: boolean = false) {
-    if (!audioBuffer) return;
+  function playSoundDirect(fromRemote: boolean = false): number {
+    if (!audioBuffer) return 0;
 
     const ctx = getAudioContext();
     const snapshot: FilterSet = { ...filters };
@@ -689,6 +717,10 @@ export function createSoundboard(
     if (!fromRemote) {
       sendAudioPlayEvent(id);
     }
+
+    return snapshot.loopEnabled
+      ? sequenceDurationMs + Math.max(0, snapshot.loopDelaySeconds * 1000)
+      : sequenceDurationMs;
   }
 
   function playSound(fromRemote: boolean = false): void {
@@ -773,6 +805,10 @@ export function createSoundboard(
     filters.reversed = reversedInput.checked;
     reversedCache = null;
     persistSettings();
+  });
+  playConcurrentlyInput.addEventListener("change", () => {
+    filters.playConcurrently = playConcurrentlyInput.checked;
+    persistLinkedLoopRepeatSettings();
   });
   loopEnabledInput.addEventListener("change", () => {
     filters.loopEnabled = loopEnabledInput.checked;
@@ -886,6 +922,7 @@ export function createSoundboard(
         1,
       ),
       reversed: Number(itemData.filters.reversed ?? 0) > 0,
+      playConcurrently: Number(itemData.filters.playConcurrently ?? 0) > 0,
       loopEnabled: Number(itemData.filters.loopEnabled ?? 0) > 0,
       loopDelaySeconds: Math.max(
         0,

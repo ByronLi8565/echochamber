@@ -45,6 +45,7 @@ interface SoundboardItemData {
     speedRate: number;
     reverbIntensity: number;
     reversed: number;
+    playConcurrently: number;
     loopEnabled: number;
     loopDelaySeconds: number;
     repeatCount: number;
@@ -241,6 +242,7 @@ class Persistence {
         speedRate: clamp(readNumber("speedRate", derivedSpeedRate), 0.5, 1.75),
         reverbIntensity: readNumber("reverbIntensity", legacyReverb > 0 ? 1 : 0),
         reversed: reversed > 0 ? 1 : 0,
+        playConcurrently: readNumber("playConcurrently", 0) > 0 ? 1 : 0,
         loopEnabled: readNumber("loopEnabled", 0) > 0 ? 1 : 0,
         loopDelaySeconds: Math.max(0, readNumber("loopDelaySeconds", 0)),
         repeatCount: Math.max(1, Math.round(readNumber("repeatCount", 1))),
@@ -704,6 +706,7 @@ class Persistence {
   updateLinkedLoopRepeatSettings(
     itemId: string,
     settings: {
+      playConcurrently: number;
       loopEnabled: number;
       loopDelaySeconds: number;
       repeatCount: number;
@@ -713,6 +716,7 @@ class Persistence {
     const linkedIds = this.getLinkedSoundboardIds(itemId);
     if (linkedIds.length === 0) return;
 
+    const playConcurrently = settings.playConcurrently > 0 ? 1 : 0;
     const loopEnabled = settings.loopEnabled > 0 ? 1 : 0;
     const loopDelaySeconds = Math.max(0, settings.loopDelaySeconds);
     const repeatCount = Math.max(1, Math.round(settings.repeatCount));
@@ -722,6 +726,7 @@ class Persistence {
       for (const linkedId of linkedIds) {
         const item = doc.items[linkedId];
         if (!item || item.type !== "soundboard") continue;
+        item.filters.playConcurrently = playConcurrently;
         item.filters.loopEnabled = loopEnabled;
         item.filters.loopDelaySeconds = loopDelaySeconds;
         item.filters.repeatCount = repeatCount;

@@ -144,6 +144,7 @@ test.describe('EchoChamber Soundboard', () => {
     await expect(panel.locator('input[data-setting="speedRate"]')).toBeVisible();
     await expect(panel.locator('input[data-setting="reverbIntensity"]')).toBeVisible();
     await expect(panel.locator('input[data-setting="reversed"]')).toBeVisible();
+    await expect(panel.locator('input[data-setting="playConcurrently"]')).toBeVisible();
     await expect(panel.locator('input[data-setting="loopEnabled"]')).toBeVisible();
     await expect(panel.locator('input[data-setting="loopDelaySeconds"]')).toBeVisible();
     await expect(panel.locator('input[data-setting="repeatCount"]')).toBeVisible();

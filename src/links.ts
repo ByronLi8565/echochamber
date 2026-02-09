@@ -2,7 +2,8 @@ import { consumeDrag } from "./drag.ts";
 import { persistence } from "./persistence.ts";
 
 type ModeChangeCallback = (active: boolean) => void;
-type PlaybackHandler = (fromRemote: boolean) => void;
+type PlaybackHandler = (fromRemote: boolean) => number;
+type SequentialPlaybackStep = { itemId: string; parentId: string | null };
 
 const playbackHandlers = new Map<string, PlaybackHandler>();
 let linkMode = false;
@@ -309,14 +310,44 @@ export function requestLinkedPlayback(
   originItemId: string,
   fromRemote: boolean = false,
 ): void {
+  const playConcurrently = isConcurrentPlaybackEnabled(originItemId);
+  if (!playConcurrently) {
+    const steps = buildSequentialPlaybackSteps(originItemId);
+    if (steps.length === 0) return;
+
+    const playStep = (index: number): void => {
+      const step = steps[index];
+      if (!step) return;
+      if (step.parentId) {
+        animateLinkBetween(step.parentId, step.itemId);
+      }
+
+      const handler = playbackHandlers.get(step.itemId);
+      const duration = handler
+        ? handler(step.itemId === originItemId ? fromRemote : true)
+        : 0;
+      if (index >= steps.length - 1) return;
+
+      const nextDelay =
+        Number.isFinite(duration) && duration > 0 ? duration : 0;
+      window.setTimeout(() => {
+        playStep(index + 1);
+      }, nextDelay);
+    };
+
+    playStep(0);
+    return;
+  }
+
   const linkedIds = persistence.getLinkedSoundboardIds(originItemId);
   const targetIds = new Set<string>(
     linkedIds.length > 0 ? linkedIds : [originItemId],
   );
 
   // Animate connection lines if there are linked bubbles
-  if (linkedIds.length > 0) {
+  if (linkedIds.length > 1) {
     for (const linkedId of linkedIds) {
+      if (linkedId === originItemId) continue;
       animateLinkBetween(originItemId, linkedId);
     }
   }
@@ -326,6 +357,60 @@ export function requestLinkedPlayback(
     if (!handler) continue;
     handler(itemId === originItemId ? fromRemote : true);
   }
+}
+
+function isConcurrentPlaybackEnabled(itemId: string): boolean {
+  const item = persistence.getDoc().items?.[itemId];
+  if (!item || item.type !== "soundboard") return false;
+  return Number(item.filters.playConcurrently ?? 0) > 0;
+}
+
+function buildSequentialPlaybackSteps(originItemId: string): SequentialPlaybackStep[] {
+  const doc = persistence.getDoc();
+  if (doc.items?.[originItemId]?.type !== "soundboard") {
+    return [{ itemId: originItemId, parentId: null }];
+  }
+
+  const adjacency = new Map<string, Set<string>>();
+  const addNeighbor = (from: string, to: string): void => {
+    let neighbors = adjacency.get(from);
+    if (!neighbors) {
+      neighbors = new Set<string>();
+      adjacency.set(from, neighbors);
+    }
+    neighbors.add(to);
+  };
+
+  for (const { itemA, itemB } of persistence.getLinks()) {
+    if (
+      doc.items?.[itemA]?.type !== "soundboard" ||
+      doc.items?.[itemB]?.type !== "soundboard"
+    ) {
+      continue;
+    }
+    addNeighbor(itemA, itemB);
+    addNeighbor(itemB, itemA);
+  }
+
+  const steps: SequentialPlaybackStep[] = [
+    { itemId: originItemId, parentId: null },
+  ];
+  const visited = new Set<string>([originItemId]);
+  const queue: string[] = [originItemId];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+    const neighbors = Array.from(adjacency.get(current) ?? []).sort();
+    for (const neighbor of neighbors) {
+      if (visited.has(neighbor)) continue;
+      visited.add(neighbor);
+      queue.push(neighbor);
+      steps.push({ itemId: neighbor, parentId: current });
+    }
+  }
+
+  return steps;
 }
 
 /**
