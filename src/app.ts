@@ -33,6 +33,12 @@ import {
   onPaintModeChange,
 } from "./color-bucket.ts";
 import {
+  initLinksTool,
+  exitLinkMode,
+  onLinkModeChange,
+  invalidateLinksOverlay,
+} from "./links.ts";
+import {
   initSettings,
   isSyncColorsEnabled,
   onSyncColorsChange,
@@ -52,7 +58,10 @@ const btnZoomOut = document.getElementById("btn-zoom-out");
 let placementMode: CanvasItem["type"] | null = null;
 
 function setPlacementMode(type: CanvasItem["type"] | null) {
-  if (type !== null) exitPaintMode();
+  if (type !== null) {
+    exitPaintMode();
+    exitLinkMode();
+  }
   console.log(`[PlacementMode] Changed from "${placementMode}" to "${type}"`);
   placementMode = type;
   btnAddSound.classList.toggle("active", type === "soundboard");
@@ -139,9 +148,19 @@ document.addEventListener("keydown", (e) => {
 // --- Paint mode / placement mode mutual exclusion ---
 
 onPaintModeChange((active) => {
-  if (active && placementMode !== null) {
+  if (!active) return;
+  if (placementMode !== null) {
     setPlacementMode(null);
   }
+  exitLinkMode();
+});
+
+onLinkModeChange((active) => {
+  if (!active) return;
+  if (placementMode !== null) {
+    setPlacementMode(null);
+  }
+  exitPaintMode();
 });
 
 // --- Theme rendering ---
@@ -216,6 +235,7 @@ function applyThemeToUI(theme: ThemeData): void {
   }
 
   updateSoundboardAdaptiveTextColor();
+  invalidateLinksOverlay();
 }
 
 function clearAllThemeRendering(): void {
@@ -225,6 +245,7 @@ function clearAllThemeRendering(): void {
     clearItemColor(itemId);
   }
   updateSoundboardAdaptiveTextColor();
+  invalidateLinksOverlay();
 }
 
 // --- Room code parsing ---
@@ -384,6 +405,7 @@ async function initializeApp() {
   // --- Settings & color bucket ---
   initSettings();
   initColorBucket(!!roomCode);
+  initLinksTool();
 
   // Subscribe to theme changes
   persistence.subscribeToTheme((theme) => {

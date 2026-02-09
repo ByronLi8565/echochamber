@@ -33,6 +33,7 @@ test.describe('EchoChamber Soundboard', () => {
     await expect(page.locator('#btn-settings')).toBeVisible();
     await expect(page.locator('#btn-zoom-in')).toBeVisible();
     await expect(page.locator('#btn-zoom-out')).toBeVisible();
+    await expect(page.locator('#btn-link-mode')).toBeVisible();
   });
 
   test('creates a sound button when Add Sound is clicked and canvas is clicked', async ({ page }) => {
@@ -140,14 +141,14 @@ test.describe('EchoChamber Soundboard', () => {
 
     const panel = soundboard.locator('.soundboard-settings-panel');
     await expect(panel).toHaveClass(/visible/);
-    await expect(panel.locator('input[data-setting="slowIntensity"]')).toBeVisible();
+    await expect(panel.locator('input[data-setting="speedRate"]')).toBeVisible();
     await expect(panel.locator('input[data-setting="reverbIntensity"]')).toBeVisible();
-    await expect(panel.locator('input[data-setting="speedIntensity"]')).toBeVisible();
     await expect(panel.locator('input[data-setting="reversed"]')).toBeVisible();
     await expect(panel.locator('input[data-setting="loopEnabled"]')).toBeVisible();
     await expect(panel.locator('input[data-setting="loopDelaySeconds"]')).toBeVisible();
     await expect(panel.locator('input[data-setting="repeatCount"]')).toBeVisible();
     await expect(panel.locator('input[data-setting="repeatDelaySeconds"]')).toBeVisible();
+    await expect(panel.locator('[data-setting-value="speedRate"]')).toContainText('1.00x');
   });
 
   test('can toggle placement mode on/off', async ({ page }) => {

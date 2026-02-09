@@ -79,9 +79,8 @@ export function createItem(
             name: (item as any).name || "",
             hotkey: (item as any).hotkey || "",
             filters: {
-              slowIntensity: 0,
+              speedRate: 1,
               reverbIntensity: 0,
-              speedIntensity: 0,
               reversed: 0,
               loopEnabled: 0,
               loopDelaySeconds: 0,

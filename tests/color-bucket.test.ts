@@ -61,6 +61,7 @@ test.describe("Color Bucket", () => {
     await page.waitForLoadState("networkidle");
 
     await expect(page.locator("#btn-color-bucket")).toBeVisible();
+    await expect(page.locator("#btn-link-mode")).toBeVisible();
     await expect(page.locator("#btn-settings")).toBeVisible();
     await expect(page.locator("#bottom-left-actions")).toBeVisible();
   });

@@ -5,6 +5,26 @@ import { persistence } from "./persistence.ts";
 import { saveAudio, deleteAudio } from "./audio-storage.ts";
 import { uploadAudio } from "./audio-sync.ts";
 import { sendAudioPlayEvent } from "./sync.ts";
+import {
+  registerSoundboardPlayback,
+  requestLinkedPlayback,
+  unregisterSoundboardPlayback,
+  getLinkedCount,
+} from "./links.ts";
+import {
+  animateProgress,
+  resetProgress,
+  showLoopingAnimation,
+  clearProgress,
+  destroyProgressRing,
+} from "./progress-ring.ts";
+import {
+  showRepeatBadge,
+  showLoopBadge,
+  showLinkBadge,
+  hideBadge,
+  destroyCounterBadge,
+} from "./counter-badge.ts";
 
 // --- Shared audio infrastructure ---
 
@@ -75,9 +95,8 @@ type SoundState = "empty" | "recording" | "has-audio";
 let soundCounter = 0;
 
 interface FilterSet {
-  slowIntensity: number;
+  speedRate: number;
   reverbIntensity: number;
-  speedIntensity: number;
   reversed: boolean;
   loopEnabled: boolean;
   loopDelaySeconds: number;
@@ -121,7 +140,15 @@ function parseCssColorToRgb(
   };
 }
 
-function relativeLuminance({ r, g, b }: { r: number; g: number; b: number }): number {
+function relativeLuminance({
+  r,
+  g,
+  b,
+}: {
+  r: number;
+  g: number;
+  b: number;
+}): number {
   const toLinear = (channel: number): number => {
     const srgb = channel / 255;
     return srgb <= 0.04045
@@ -155,7 +182,9 @@ export function updateSoundboardAdaptiveTextColor(): void {
   const labelTextColor = getReadableTextColor(labelBackground);
 
   for (const wrapper of wrappers) {
-    const bubble = wrapper.querySelector(".soundboard-bubble") as HTMLElement | null;
+    const bubble = wrapper.querySelector(
+      ".soundboard-bubble",
+    ) as HTMLElement | null;
     if (bubble) {
       const bubbleBackground = getComputedStyle(bubble).backgroundColor;
       const bubbleTextColor = getReadableTextColor(bubbleBackground);
@@ -164,7 +193,9 @@ export function updateSoundboardAdaptiveTextColor(): void {
       }
     }
 
-    const nameLabel = wrapper.querySelector(".soundboard-name") as HTMLElement | null;
+    const nameLabel = wrapper.querySelector(
+      ".soundboard-name",
+    ) as HTMLElement | null;
     if (nameLabel && labelTextColor) {
       nameLabel.style.color = labelTextColor;
     }
@@ -245,9 +276,8 @@ export function createSoundboard(
   settingsBubble.textContent = "⚙";
 
   const filters: FilterSet = {
-    slowIntensity: 0,
+    speedRate: 1,
     reverbIntensity: 0,
-    speedIntensity: 0,
     reversed: false,
     loopEnabled: false,
     loopDelaySeconds: 0,
@@ -263,16 +293,22 @@ export function createSoundboard(
   settingsPanel.innerHTML = `
     <div class="soundboard-settings-title">Bubble settings</div>
     <label class="soundboard-setting-row">
-      <span>Slow intensity</span>
-      <input type="range" min="0" max="1" step="0.05" data-setting="slowIntensity" />
+      <span class="soundboard-setting-header">
+        <span>Speed</span>
+        <span class="soundboard-setting-value" data-setting-value="speedRate"></span>
+      </span>
+      <input type="range" min="0.5" max="1.75" step="0.01" data-setting="speedRate" />
+      <div class="soundboard-speed-hints">
+        <span class="soundboard-speed-hint slowed">Slowed 0.75x</span>
+        <span class="soundboard-speed-hint nightcore">Nightcore 1.35x</span>
+      </div>
     </label>
     <label class="soundboard-setting-row">
-      <span>Reverb intensity</span>
+      <span class="soundboard-setting-header">
+        <span>Reverb intensity</span>
+        <span class="soundboard-setting-value" data-setting-value="reverbIntensity"></span>
+      </span>
       <input type="range" min="0" max="1" step="0.05" data-setting="reverbIntensity" />
-    </label>
-    <label class="soundboard-setting-row">
-      <span>Speed intensity</span>
-      <input type="range" min="0" max="1" step="0.05" data-setting="speedIntensity" />
     </label>
     <label class="soundboard-setting-row checkbox">
       <input type="checkbox" data-setting="reversed" />
@@ -280,18 +316,27 @@ export function createSoundboard(
     </label>
     <label class="soundboard-setting-row checkbox">
       <input type="checkbox" data-setting="loopEnabled" />
-      <span>Loop infinitely</span>
+      <span>Loop</span>
     </label>
     <label class="soundboard-setting-row loop-delay">
-      <span>Loop delay (seconds)</span>
+      <span class="soundboard-setting-header">
+        <span>Loop delay (seconds)</span>
+        <span class="soundboard-setting-value" data-setting-value="loopDelaySeconds"></span>
+      </span>
       <input type="range" min="0" max="5" step="0.1" data-setting="loopDelaySeconds" />
     </label>
     <label class="soundboard-setting-row">
-      <span>Repeat count</span>
+      <span class="soundboard-setting-header">
+        <span>Repeat count</span>
+        <span class="soundboard-setting-value" data-setting-value="repeatCount"></span>
+      </span>
       <input type="range" min="1" max="10" step="1" data-setting="repeatCount" />
     </label>
     <label class="soundboard-setting-row repeat-delay">
-      <span>Repeat delay (seconds)</span>
+      <span class="soundboard-setting-header">
+        <span>Repeat delay (seconds)</span>
+        <span class="soundboard-setting-value" data-setting-value="repeatDelaySeconds"></span>
+      </span>
       <input type="range" min="0" max="5" step="0.1" data-setting="repeatDelaySeconds" />
     </label>
   `;
@@ -320,14 +365,11 @@ export function createSoundboard(
 
   hotkeyBubble.textContent = hotkey || "—";
 
-  const slowIntensityInput = settingsPanel.querySelector(
-    'input[data-setting="slowIntensity"]',
+  const speedRateInput = settingsPanel.querySelector(
+    'input[data-setting="speedRate"]',
   ) as HTMLInputElement;
   const reverbIntensityInput = settingsPanel.querySelector(
     'input[data-setting="reverbIntensity"]',
-  ) as HTMLInputElement;
-  const speedIntensityInput = settingsPanel.querySelector(
-    'input[data-setting="speedIntensity"]',
   ) as HTMLInputElement;
   const reversedInput = settingsPanel.querySelector(
     'input[data-setting="reversed"]',
@@ -344,11 +386,27 @@ export function createSoundboard(
   const repeatDelayInput = settingsPanel.querySelector(
     'input[data-setting="repeatDelaySeconds"]',
   ) as HTMLInputElement;
+  const speedRateValue = settingsPanel.querySelector(
+    '[data-setting-value="speedRate"]',
+  ) as HTMLElement;
+  const reverbIntensityValue = settingsPanel.querySelector(
+    '[data-setting-value="reverbIntensity"]',
+  ) as HTMLElement;
+  const loopDelayValue = settingsPanel.querySelector(
+    '[data-setting-value="loopDelaySeconds"]',
+  ) as HTMLElement;
+  const repeatCountValue = settingsPanel.querySelector(
+    '[data-setting-value="repeatCount"]',
+  ) as HTMLElement;
+  const repeatDelayValue = settingsPanel.querySelector(
+    '[data-setting-value="repeatDelaySeconds"]',
+  ) as HTMLElement;
   const loopDelayRow = settingsPanel.querySelector(
     ".soundboard-setting-row.loop-delay",
   ) as HTMLElement;
   const playbackTimers = new Set<number>();
   let loopingTimerId: number | null = null;
+  let settingsPanelVisible = false;
 
   function clearPlaybackTimers(): void {
     for (const timerId of playbackTimers) clearTimeout(timerId);
@@ -357,6 +415,9 @@ export function createSoundboard(
       clearTimeout(loopingTimerId);
       loopingTimerId = null;
     }
+    // Clear visual feedback
+    hideBadge(bubble);
+    clearProgress(bubble);
   }
 
   function toggleSettingsPanel(nextVisible?: boolean): void {
@@ -364,6 +425,8 @@ export function createSoundboard(
       typeof nextVisible === "boolean"
         ? nextVisible
         : !settingsPanel.classList.contains("visible");
+    if (settingsPanelVisible === shouldShow) return;
+    settingsPanelVisible = shouldShow;
     settingsPanel.classList.toggle("visible", shouldShow);
     settingsBubble.classList.toggle("active", shouldShow);
   }
@@ -373,24 +436,40 @@ export function createSoundboard(
     loopDelayRow.classList.toggle("disabled", !filters.loopEnabled);
   }
 
+  function refreshSettingValueLabels(): void {
+    speedRateValue.textContent = `${filters.speedRate.toFixed(2)}x`;
+    reverbIntensityValue.textContent = filters.reverbIntensity.toFixed(2);
+    loopDelayValue.textContent = `${filters.loopDelaySeconds.toFixed(1)}s`;
+    repeatCountValue.textContent = String(filters.repeatCount);
+    repeatDelayValue.textContent = `${filters.repeatDelaySeconds.toFixed(1)}s`;
+  }
+
   function syncSettingsInputsFromState(): void {
-    slowIntensityInput.value = String(filters.slowIntensity);
+    speedRateInput.value = String(filters.speedRate);
     reverbIntensityInput.value = String(filters.reverbIntensity);
-    speedIntensityInput.value = String(filters.speedIntensity);
     reversedInput.checked = filters.reversed;
     loopEnabledInput.checked = filters.loopEnabled;
     loopDelayInput.value = String(filters.loopDelaySeconds);
     repeatCountInput.value = String(filters.repeatCount);
     repeatDelayInput.value = String(filters.repeatDelaySeconds);
+    refreshSettingValueLabels();
     updateSettingsControlState();
   }
 
   function persistSettings(): void {
     persistence.updateSoundboardFilters(id, {
-      slowIntensity: filters.slowIntensity,
+      speedRate: filters.speedRate,
       reverbIntensity: filters.reverbIntensity,
-      speedIntensity: filters.speedIntensity,
       reversed: filters.reversed ? 1 : 0,
+      loopEnabled: filters.loopEnabled ? 1 : 0,
+      loopDelaySeconds: filters.loopDelaySeconds,
+      repeatCount: filters.repeatCount,
+      repeatDelaySeconds: filters.repeatDelaySeconds,
+    });
+  }
+
+  function persistLinkedLoopRepeatSettings(): void {
+    persistence.updateLinkedLoopRepeatSettings(id, {
       loopEnabled: filters.loopEnabled ? 1 : 0,
       loopDelaySeconds: filters.loopDelaySeconds,
       repeatCount: filters.repeatCount,
@@ -474,7 +553,7 @@ export function createSoundboard(
   }
 
   // --- Playback (async, overlapping) ---
-  function playSound(fromRemote: boolean = false) {
+  function playSoundDirect(fromRemote: boolean = false) {
     if (!audioBuffer) return;
 
     const ctx = getAudioContext();
@@ -490,9 +569,7 @@ export function createSoundboard(
       const source = ctx.createBufferSource();
       source.buffer = buffer;
 
-      const slowRate = 1 - 0.45 * clamp(snapshot.slowIntensity, 0, 1);
-      const speedRate = 1 + 0.75 * clamp(snapshot.speedIntensity, 0, 1);
-      const rate = clamp(slowRate * speedRate, 0.2, 3);
+      const rate = clamp(snapshot.speedRate, 0.5, 1.75);
       source.playbackRate.value = rate;
 
       const reverbMix = clamp(snapshot.reverbIntensity, 0, 1);
@@ -518,25 +595,71 @@ export function createSoundboard(
       return (buffer.duration / rate) * 1000;
     }
 
-    const slowRate = 1 - 0.45 * clamp(snapshot.slowIntensity, 0, 1);
-    const speedRate = 1 + 0.75 * clamp(snapshot.speedIntensity, 0, 1);
-    const estimatedRate = clamp(slowRate * speedRate, 0.2, 3);
+    const estimatedRate = clamp(snapshot.speedRate, 0.5, 1.75);
     const estimatedDurationMs = (audioBuffer.duration / estimatedRate) * 1000;
 
     clearPlaybackTimers();
     const repeatCount = Math.max(1, Math.round(snapshot.repeatCount));
     const repeatDelayMs = Math.max(0, snapshot.repeatDelaySeconds * 1000);
+
+    // Determine visualization type
+    const linkedCount = getLinkedCount(id);
+    const isLooping = snapshot.loopEnabled;
+    const hasRepeats = repeatCount > 1;
+    const hasLinks = linkedCount > 1;
+
+    // Show appropriate badge
+    if (hasLinks) {
+      showLinkBadge(bubble, linkedCount);
+    } else if (isLooping) {
+      showLoopBadge(bubble);
+    } else if (hasRepeats) {
+      showRepeatBadge(bubble, 1, repeatCount);
+    }
+
+    // Visual feedback for playback type
+    let currentRepeat = 1;
     const playSequence = (): number => {
-      playOnce();
+      const singleDuration = playOnce();
+
+      // Animate progress ring for first play
+      if (currentRepeat === 1) {
+        if (isLooping) {
+          showLoopingAnimation(bubble, "var(--state-purple)");
+        } else {
+          const color = hasLinks ? "var(--state-orange)" : "var(--state-cyan)";
+          animateProgress(bubble, singleDuration, { color });
+        }
+      }
+
       for (let i = 1; i < repeatCount; i++) {
         const nextDelayMs = i * (estimatedDurationMs + repeatDelayMs);
         const timerId = window.setTimeout(() => {
           playbackTimers.delete(timerId);
-          playOnce();
+          currentRepeat = i + 1;
+          const playDuration = playOnce();
+
+          // Update badge and progress ring for each repeat
+          if (hasRepeats && !isLooping) {
+            showRepeatBadge(bubble, currentRepeat, repeatCount);
+            resetProgress(bubble);
+            animateProgress(bubble, playDuration, {
+              color: "var(--state-cyan)",
+              onComplete:
+                currentRepeat === repeatCount
+                  ? () => {
+                      hideBadge(bubble);
+                      clearProgress(bubble);
+                    }
+                  : undefined,
+            });
+          }
         }, nextDelayMs);
         playbackTimers.add(timerId);
       }
-      return repeatCount * estimatedDurationMs + (repeatCount - 1) * repeatDelayMs;
+      return (
+        repeatCount * estimatedDurationMs + (repeatCount - 1) * repeatDelayMs
+      );
     };
 
     const sequenceDurationMs = playSequence();
@@ -544,19 +667,35 @@ export function createSoundboard(
     if (snapshot.loopEnabled) {
       const scheduleLoop = () => {
         const loopDelayMs = Math.max(0, snapshot.loopDelaySeconds * 1000);
+        currentRepeat = 1;
         const duration = playSequence();
-        loopingTimerId = window.setTimeout(scheduleLoop, duration + loopDelayMs);
+        loopingTimerId = window.setTimeout(
+          scheduleLoop,
+          duration + loopDelayMs,
+        );
       };
       loopingTimerId = window.setTimeout(
         scheduleLoop,
         sequenceDurationMs + snapshot.loopDelaySeconds * 1000,
       );
+    } else if (!hasRepeats) {
+      // Single play - clear visuals after completion
+      setTimeout(() => {
+        hideBadge(bubble);
+        clearProgress(bubble);
+      }, sequenceDurationMs);
     }
 
     if (!fromRemote) {
       sendAudioPlayEvent(id);
     }
   }
+
+  function playSound(fromRemote: boolean = false): void {
+    requestLinkedPlayback(id, fromRemote);
+  }
+
+  registerSoundboardPlayback(id, playSoundDirect);
 
   // --- Click handler on main bubble ---
   bubble.addEventListener("click", (e) => {
@@ -614,25 +753,20 @@ export function createSoundboard(
     if (!settingsPanel.classList.contains("visible")) return;
     const target = e.target as Node | null;
     if (!target) return;
-    if (
-      !settingsPanel.contains(target) &&
-      !settingsBubble.contains(target)
-    ) {
+    if (!settingsPanel.contains(target) && !settingsBubble.contains(target)) {
       toggleSettingsPanel(false);
     }
   };
   document.addEventListener("pointerdown", onGlobalPointerDown);
 
-  slowIntensityInput.addEventListener("input", () => {
-    filters.slowIntensity = clamp(Number(slowIntensityInput.value), 0, 1);
+  speedRateInput.addEventListener("input", () => {
+    filters.speedRate = clamp(Number(speedRateInput.value), 0.5, 1.75);
+    refreshSettingValueLabels();
     persistSettings();
   });
   reverbIntensityInput.addEventListener("input", () => {
     filters.reverbIntensity = clamp(Number(reverbIntensityInput.value), 0, 1);
-    persistSettings();
-  });
-  speedIntensityInput.addEventListener("input", () => {
-    filters.speedIntensity = clamp(Number(speedIntensityInput.value), 0, 1);
+    refreshSettingValueLabels();
     persistSettings();
   });
   reversedInput.addEventListener("change", () => {
@@ -644,19 +778,25 @@ export function createSoundboard(
     filters.loopEnabled = loopEnabledInput.checked;
     if (!filters.loopEnabled) clearPlaybackTimers();
     updateSettingsControlState();
-    persistSettings();
+    persistLinkedLoopRepeatSettings();
   });
   loopDelayInput.addEventListener("input", () => {
     filters.loopDelaySeconds = Math.max(0, Number(loopDelayInput.value));
-    persistSettings();
+    refreshSettingValueLabels();
+    persistLinkedLoopRepeatSettings();
   });
   repeatCountInput.addEventListener("input", () => {
-    filters.repeatCount = Math.max(1, Math.round(Number(repeatCountInput.value)));
-    persistSettings();
+    filters.repeatCount = Math.max(
+      1,
+      Math.round(Number(repeatCountInput.value)),
+    );
+    refreshSettingValueLabels();
+    persistLinkedLoopRepeatSettings();
   });
   repeatDelayInput.addEventListener("input", () => {
     filters.repeatDelaySeconds = Math.max(0, Number(repeatDelayInput.value));
-    persistSettings();
+    refreshSettingValueLabels();
+    persistLinkedLoopRepeatSettings();
   });
   syncSettingsInputsFromState();
 
@@ -717,26 +857,44 @@ export function createSoundboard(
     if (!itemData || itemData.type !== "soundboard") return;
 
     // Update settings/filters
+    const legacySlowIntensity = clamp(
+      Number(itemData.filters.slowIntensity ?? itemData.filters.lowpass ?? 0),
+      0,
+      1,
+    );
+    const legacySpeedIntensity = clamp(
+      Number(itemData.filters.speedIntensity ?? itemData.filters.highpass ?? 0),
+      0,
+      1,
+    );
+    const legacyDerivedSpeedRate = clamp(
+      (1 - 0.45 * legacySlowIntensity) * (1 + 0.75 * legacySpeedIntensity),
+      0.5,
+      1.75,
+    );
     const newFilters: FilterSet = {
-      slowIntensity: clamp(
-        Number(itemData.filters.slowIntensity ?? itemData.filters.lowpass ?? 0),
-        0,
-        1,
+      speedRate: clamp(
+        Number(itemData.filters.speedRate ?? legacyDerivedSpeedRate),
+        0.5,
+        1.75,
       ),
       reverbIntensity: clamp(
-        Number(itemData.filters.reverbIntensity ?? itemData.filters.reverb ?? 0),
-        0,
-        1,
-      ),
-      speedIntensity: clamp(
-        Number(itemData.filters.speedIntensity ?? itemData.filters.highpass ?? 0),
+        Number(
+          itemData.filters.reverbIntensity ?? itemData.filters.reverb ?? 0,
+        ),
         0,
         1,
       ),
       reversed: Number(itemData.filters.reversed ?? 0) > 0,
       loopEnabled: Number(itemData.filters.loopEnabled ?? 0) > 0,
-      loopDelaySeconds: Math.max(0, Number(itemData.filters.loopDelaySeconds ?? 0)),
-      repeatCount: Math.max(1, Math.round(Number(itemData.filters.repeatCount ?? 1))),
+      loopDelaySeconds: Math.max(
+        0,
+        Number(itemData.filters.loopDelaySeconds ?? 0),
+      ),
+      repeatCount: Math.max(
+        1,
+        Math.round(Number(itemData.filters.repeatCount ?? 1)),
+      ),
       repeatDelaySeconds: Math.max(
         0,
         Number(itemData.filters.repeatDelaySeconds ?? 0),
@@ -807,11 +965,15 @@ export function createSoundboard(
 
   // --- Cleanup function ---
   function cleanup() {
+    toggleSettingsPanel(false);
     if (unsubscribe) unsubscribe();
     if (hotkey) releaseHotkey(hotkey);
+    unregisterSoundboardPlayback(id);
     clearPlaybackTimers();
     stopListening();
     document.removeEventListener("pointerdown", onGlobalPointerDown);
+    destroyProgressRing(bubble);
+    destroyCounterBadge(bubble);
   }
 
   // --- Public API for loading audio (called during restoration) ---

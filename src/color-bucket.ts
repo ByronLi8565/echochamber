@@ -1,5 +1,6 @@
 import { persistence } from "./persistence.ts";
 import { isSyncColorsEnabled, onSyncColorsChange } from "./settings.ts";
+import { invalidateLinksOverlay } from "./links.ts";
 
 let paintMode = false;
 let selectedColor = "#ff6b6b";
@@ -67,6 +68,7 @@ function enterPaintMode(): void {
       const itemId = wrapper?.dataset.itemId;
       if (itemId) {
         persistence.updateItemColor(itemId, selectedColor);
+        invalidateLinksOverlay();
       }
       return;
     }
@@ -80,6 +82,7 @@ function enterPaintMode(): void {
       e.stopImmediatePropagation();
 
       persistence.updateBackgroundColor(selectedColor);
+      invalidateLinksOverlay();
       return;
     }
 

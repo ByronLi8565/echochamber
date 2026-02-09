@@ -20,9 +20,17 @@ const VIEWPORT_STORAGE_KEY = "echochamber-viewport";
 const SAVE_DEBOUNCE_MS = 500;
 const VERSION = "1.0.0";
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 interface ThemeData {
   backgroundColor?: string;
   itemColors: { [itemId: string]: string };
+}
+
+interface LinkData {
+  [edgeKey: string]: 1;
 }
 
 interface SoundboardItemData {
@@ -34,16 +42,17 @@ interface SoundboardItemData {
   name: string;
   hotkey: string;
   filters: {
-    slowIntensity: number;
+    speedRate: number;
     reverbIntensity: number;
-    speedIntensity: number;
     reversed: number;
     loopEnabled: number;
     loopDelaySeconds: number;
     repeatCount: number;
     repeatDelaySeconds: number;
-    lowpass?: number; // Legacy (migrated to slowIntensity)
-    highpass?: number; // Legacy (migrated to speedIntensity)
+    slowIntensity?: number; // Legacy (migrated to speedRate)
+    speedIntensity?: number; // Legacy (migrated to speedRate)
+    lowpass?: number; // Legacy (migrated to speedRate)
+    highpass?: number; // Legacy (migrated to speedRate)
     reverb?: number; // Legacy (migrated to reverbIntensity)
   };
 }
@@ -69,6 +78,7 @@ interface EchoChamberDoc {
   nextItemId: number;
   audioFiles: { [itemId: string]: string };
   theme: ThemeData;
+  links: LinkData;
 }
 
 interface ViewportState {
@@ -95,6 +105,21 @@ class Persistence {
   private viewport: ViewportState;
   private localEditsBlocked = false;
   private warnedAboutBlockedEdits = false;
+
+  private getLinkKey(itemA: string, itemB: string): string | null {
+    if (!itemA || !itemB || itemA === itemB) return null;
+    return itemA < itemB ? `${itemA}::${itemB}` : `${itemB}::${itemA}`;
+  }
+
+  private parseLinkKey(edgeKey: string): [string, string] | null {
+    const [itemA, itemB, ...rest] = edgeKey.split("::");
+    if (rest.length > 0 || !itemA || !itemB) return null;
+    return [itemA, itemB];
+  }
+
+  private isSoundboardInDoc(doc: EchoChamberDoc, itemId: string): boolean {
+    return doc.items?.[itemId]?.type === "soundboard";
+  }
 
   constructor() {
     this.doc = this.ensureDocShape(this.loadDoc());
@@ -134,6 +159,7 @@ class Persistence {
       nextItemId: 0,
       audioFiles: {},
       theme: { itemColors: {} },
+      links: {},
     };
   }
 
@@ -144,7 +170,8 @@ class Persistence {
       doc.metadata &&
       typeof doc.nextItemId === "number" &&
       doc.items &&
-      doc.audioFiles
+      doc.audioFiles &&
+      doc.links
     ) {
       return doc;
     }
@@ -161,6 +188,7 @@ class Persistence {
       nextItemId?: number;
       audioFiles?: EchoChamberDoc["audioFiles"];
       theme?: EchoChamberDoc["theme"];
+      links?: EchoChamberDoc["links"];
     };
     const now = Date.now();
 
@@ -184,12 +212,15 @@ class Persistence {
     } else if (!mutableDoc.theme.itemColors) {
       mutableDoc.theme.itemColors = {};
     }
+    if (!mutableDoc.links) mutableDoc.links = {};
 
     for (const item of Object.values(mutableDoc.items)) {
       if (!item || item.type !== "soundboard") continue;
       const rawFilters = item.filters as Record<string, unknown> | undefined;
       const lowpass = Number(rawFilters?.lowpass ?? 0);
       const highpass = Number(rawFilters?.highpass ?? 0);
+      const legacySlowIntensity = Number(rawFilters?.slowIntensity ?? 0);
+      const legacySpeedIntensity = Number(rawFilters?.speedIntensity ?? 0);
       const legacyReverb = Number(rawFilters?.reverb ?? 0);
       const reversed = Number(rawFilters?.reversed ?? 0);
 
@@ -198,10 +229,17 @@ class Persistence {
         return Number.isFinite(value) ? value : fallback;
       };
 
+      const normalizedSlow = clamp(readNumber("slowIntensity", lowpass > 0 ? 1 : legacySlowIntensity), 0, 1);
+      const normalizedSpeed = clamp(readNumber("speedIntensity", highpass > 0 ? 1 : legacySpeedIntensity), 0, 1);
+      const derivedSpeedRate = clamp(
+        (1 - 0.45 * normalizedSlow) * (1 + 0.75 * normalizedSpeed),
+        0.5,
+        1.75,
+      );
+
       item.filters = {
-        slowIntensity: readNumber("slowIntensity", lowpass > 0 ? 1 : 0),
+        speedRate: clamp(readNumber("speedRate", derivedSpeedRate), 0.5, 1.75),
         reverbIntensity: readNumber("reverbIntensity", legacyReverb > 0 ? 1 : 0),
-        speedIntensity: readNumber("speedIntensity", highpass > 0 ? 1 : 0),
         reversed: reversed > 0 ? 1 : 0,
         loopEnabled: readNumber("loopEnabled", 0) > 0 ? 1 : 0,
         loopDelaySeconds: Math.max(0, readNumber("loopDelaySeconds", 0)),
@@ -519,6 +557,13 @@ class Persistence {
       if (doc.theme?.itemColors?.[itemId]) {
         delete doc.theme.itemColors[itemId];
       }
+      for (const edgeKey of Object.keys(doc.links ?? {})) {
+        const pair = this.parseLinkKey(edgeKey);
+        if (!pair) continue;
+        if (pair[0] === itemId || pair[1] === itemId) {
+          delete doc.links[edgeKey];
+        }
+      }
     });
 
     // Side effect: delete from IndexedDB
@@ -565,6 +610,123 @@ class Persistence {
   setAudioFile(itemId: string, audioKey: string): void {
     this.change((doc) => {
       doc.audioFiles[itemId] = audioKey;
+    });
+  }
+
+  getLinks(): Array<{ itemA: string; itemB: string }> {
+    const links: Array<{ itemA: string; itemB: string }> = [];
+    for (const edgeKey of Object.keys(this.doc.links ?? {})) {
+      const pair = this.parseLinkKey(edgeKey);
+      if (!pair) continue;
+      links.push({ itemA: pair[0], itemB: pair[1] });
+    }
+    return links;
+  }
+
+  areSoundboardsLinked(itemA: string, itemB: string): boolean {
+    const edgeKey = this.getLinkKey(itemA, itemB);
+    if (!edgeKey) return false;
+    return Number(this.doc.links?.[edgeKey] ?? 0) > 0;
+  }
+
+  toggleSoundboardLink(itemA: string, itemB: string): boolean {
+    const edgeKey = this.getLinkKey(itemA, itemB);
+    if (!edgeKey) return false;
+    if (
+      !this.isSoundboardInDoc(this.doc, itemA) ||
+      !this.isSoundboardInDoc(this.doc, itemB)
+    ) {
+      return false;
+    }
+
+    let nowLinked = false;
+    this.change((doc) => {
+      if (
+        !this.isSoundboardInDoc(doc, itemA) ||
+        !this.isSoundboardInDoc(doc, itemB)
+      ) {
+        return;
+      }
+
+      if (doc.links[edgeKey]) {
+        delete doc.links[edgeKey];
+        nowLinked = false;
+      } else {
+        doc.links[edgeKey] = 1;
+        nowLinked = true;
+      }
+    });
+
+    return nowLinked;
+  }
+
+  getLinkedSoundboardIds(itemId: string): string[] {
+    if (!this.isSoundboardInDoc(this.doc, itemId)) return [];
+
+    const adjacency = new Map<string, Set<string>>();
+    const addNeighbor = (from: string, to: string): void => {
+      let neighbors = adjacency.get(from);
+      if (!neighbors) {
+        neighbors = new Set<string>();
+        adjacency.set(from, neighbors);
+      }
+      neighbors.add(to);
+    };
+
+    for (const { itemA, itemB } of this.getLinks()) {
+      if (
+        !this.isSoundboardInDoc(this.doc, itemA) ||
+        !this.isSoundboardInDoc(this.doc, itemB)
+      ) {
+        continue;
+      }
+      addNeighbor(itemA, itemB);
+      addNeighbor(itemB, itemA);
+    }
+
+    const visited = new Set<string>([itemId]);
+    const queue: string[] = [itemId];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current) continue;
+      const neighbors = adjacency.get(current);
+      if (!neighbors) continue;
+      for (const neighbor of neighbors) {
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+
+    return Array.from(visited);
+  }
+
+  updateLinkedLoopRepeatSettings(
+    itemId: string,
+    settings: {
+      loopEnabled: number;
+      loopDelaySeconds: number;
+      repeatCount: number;
+      repeatDelaySeconds: number;
+    },
+  ): void {
+    const linkedIds = this.getLinkedSoundboardIds(itemId);
+    if (linkedIds.length === 0) return;
+
+    const loopEnabled = settings.loopEnabled > 0 ? 1 : 0;
+    const loopDelaySeconds = Math.max(0, settings.loopDelaySeconds);
+    const repeatCount = Math.max(1, Math.round(settings.repeatCount));
+    const repeatDelaySeconds = Math.max(0, settings.repeatDelaySeconds);
+
+    this.change((doc) => {
+      for (const linkedId of linkedIds) {
+        const item = doc.items[linkedId];
+        if (!item || item.type !== "soundboard") continue;
+        item.filters.loopEnabled = loopEnabled;
+        item.filters.loopDelaySeconds = loopDelaySeconds;
+        item.filters.repeatCount = repeatCount;
+        item.filters.repeatDelaySeconds = repeatDelaySeconds;
+      }
     });
   }
 
