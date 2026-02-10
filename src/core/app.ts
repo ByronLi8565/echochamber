@@ -44,6 +44,7 @@ import {
   onSyncColorsChange,
 } from "../ui/settings.ts";
 import type { ThemeData } from "../sync/persistence.ts";
+import { ScopedListeners } from "../util/scoped-listeners.ts";
 
 const container = document.getElementById("canvas-container")!;
 const btnAddSound = document.getElementById("btn-add-sound")!;
@@ -52,6 +53,7 @@ const btnExport = document.getElementById("btn-export")!;
 const btnImport = document.getElementById("btn-import")!;
 const btnZoomIn = document.getElementById("btn-zoom-in");
 const btnZoomOut = document.getElementById("btn-zoom-out");
+const appListeners = new ScopedListeners();
 
 // --- Placement mode ---
 
@@ -69,25 +71,29 @@ function setPlacementMode(type: CanvasItem["type"] | null) {
   container.classList.toggle("placing", type !== null);
 }
 
-btnAddSound.addEventListener("click", () => {
+appListeners.listen<MouseEvent>(btnAddSound, "click", () => {
   console.log("[Button] Add Sound button clicked");
   setPlacementMode(placementMode === "soundboard" ? null : "soundboard");
 });
 
-btnAddText.addEventListener("click", () => {
+appListeners.listen<MouseEvent>(btnAddText, "click", () => {
   console.log("[Button] Add Text button clicked");
   setPlacementMode(placementMode === "textbox" ? null : "textbox");
 });
 
-btnZoomIn?.addEventListener("click", () => {
-  zoomIn();
-});
+if (btnZoomIn) {
+  appListeners.listen<MouseEvent>(btnZoomIn, "click", () => {
+    zoomIn();
+  });
+}
 
-btnZoomOut?.addEventListener("click", () => {
-  zoomOut();
-});
+if (btnZoomOut) {
+  appListeners.listen<MouseEvent>(btnZoomOut, "click", () => {
+    zoomOut();
+  });
+}
 
-container.addEventListener("pointerup", (e) => {
+appListeners.listen<PointerEvent>(container, "pointerup", (e) => {
   console.log("[Canvas] Pointer up event", {
     placementMode,
     isPanning: isPanningNow(),
@@ -126,7 +132,7 @@ container.addEventListener("pointerup", (e) => {
 
 // --- Keyboard hotkeys ---
 
-document.addEventListener("keydown", (e) => {
+appListeners.listen<KeyboardEvent>(document, "keydown", (e) => {
   // Don't trigger hotkeys while typing in editable fields
   const active = document.activeElement as HTMLElement | null;
   if (active?.isContentEditable) return;
@@ -434,7 +440,7 @@ async function initializeApp() {
 
 // --- Export/Import ---
 
-btnExport.addEventListener("click", async () => {
+appListeners.listen<MouseEvent>(btnExport, "click", async () => {
   console.log("[Button] Export button clicked");
   try {
     const blob = await persistence.exportToFile();
@@ -451,7 +457,7 @@ btnExport.addEventListener("click", async () => {
   }
 });
 
-btnImport.addEventListener("click", () => {
+appListeners.listen<MouseEvent>(btnImport, "click", () => {
   console.log("[Button] Import button clicked");
   const input = document.createElement("input");
   input.type = "file";

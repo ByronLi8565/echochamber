@@ -14,6 +14,7 @@ let roomCode: string | null = null;
 const knownAudioKeys = new Set<string>();
 const pendingDownloads = new Set<string>();
 const queuedDownloadKeys = new Map<string, string>();
+const BATCH_UPLOAD_CONCURRENCY = 4;
 
 // --- State management ---
 
@@ -28,6 +29,34 @@ export function setAudioSyncRoom(code: string): void {
 
 export function markAudioKeyKnown(key: string): void {
   knownAudioKeys.add(key);
+}
+
+function withRoomCode<A>(
+  run: (room: string) => Effect.Effect<A, SyncError, never>,
+): Effect.Effect<A, SyncError, never> {
+  if (!roomCode) {
+    return Effect.fail(
+      new SyncError({
+        message: "Audio sync requested without an active room",
+      }),
+    );
+  }
+  return run(roomCode);
+}
+
+function logSyncError(
+  action: string,
+  itemId: string,
+  error: unknown,
+  details?: Record<string, unknown>,
+): void {
+  console.error("[AudioSync]", {
+    action,
+    itemId,
+    roomCode,
+    ...details,
+    error,
+  });
 }
 
 // --- Binary serialization ---
@@ -79,50 +108,113 @@ const retrySchedule = pipe(
 );
 
 function uploadEffect(itemId: string, audioBuffer: AudioBuffer) {
-  return pipe(
-    Effect.tryPromise({
-      try: () => {
-        const binary = serializeAudioBinary(audioBuffer);
-        return fetch(`/api/rooms/${roomCode}/audio/${itemId}`, {
-          method: "PUT",
-          headers: { "Content-Length": String(binary.byteLength) },
-          body: binary,
-        });
-      },
-      catch: (cause) =>
-        new SyncError({
-          message: `Audio upload request failed for ${itemId}`,
-          cause,
-        }),
-    }),
-    Effect.flatMap((response) =>
-      response.ok
-        ? Effect.void
-        : Effect.fail(
-            new SyncError({
-              message: `Audio upload failed for ${itemId}: HTTP ${response.status}`,
+  return withRoomCode((room) =>
+    pipe(
+      Effect.try({
+        try: () => serializeAudioBinary(audioBuffer),
+        catch: (cause) =>
+          new SyncError({
+            message: `Audio serialization failed for ${itemId}`,
+            cause,
+          }),
+      }),
+      Effect.flatMap((binary) =>
+        Effect.tryPromise({
+          try: () =>
+            fetch(`/api/rooms/${room}/audio/${itemId}`, {
+              method: "PUT",
+              headers: { "Content-Length": String(binary.byteLength) },
+              body: binary,
             }),
-          ),
+          catch: (cause) =>
+            new SyncError({
+              message: `Audio upload request failed for ${itemId}`,
+              cause,
+            }),
+        }),
+      ),
+      Effect.flatMap((response) =>
+        response.ok
+          ? Effect.void
+          : Effect.fail(
+              new SyncError({
+                message: `Audio upload failed for ${itemId}: HTTP ${response.status}`,
+              }),
+            ),
+      ),
     ),
   );
 }
 
 function downloadEffect(itemId: string) {
-  return pipe(
-    Effect.tryPromise({
-      try: async () => {
-        const response = await fetch(`/api/rooms/${roomCode}/audio/${itemId}`);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.arrayBuffer();
-      },
-      catch: (cause) =>
-        new SyncError({
-          message: `Audio download request failed for ${itemId}`,
-          cause,
-        }),
-    }),
-    Effect.retry(retrySchedule),
+  return withRoomCode((room) =>
+    pipe(
+      Effect.tryPromise({
+        try: async () => {
+          const response = await fetch(`/api/rooms/${room}/audio/${itemId}`);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.arrayBuffer();
+        },
+        catch: (cause) =>
+          new SyncError({
+            message: `Audio download request failed for ${itemId}`,
+            cause,
+          }),
+      }),
+      Effect.retry(retrySchedule),
+    ),
   );
+}
+
+function loadAudioEffect(
+  audioKey: string,
+  ctx: AudioContext,
+  itemId: string,
+): Effect.Effect<AudioBuffer | null, SyncError, never> {
+  return Effect.tryPromise({
+    try: () => loadAudio(audioKey, ctx),
+    catch: (cause) =>
+      new SyncError({
+        message: `Failed loading IndexedDB audio key ${audioKey} for ${itemId}`,
+        cause,
+      }),
+  });
+}
+
+function saveAudioEffect(
+  audioKey: string,
+  buffer: AudioBuffer,
+  itemId: string,
+): Effect.Effect<void, SyncError, never> {
+  return Effect.tryPromise({
+    try: () => saveAudio(audioKey, buffer),
+    catch: (cause) =>
+      new SyncError({
+        message: `Failed saving IndexedDB audio key ${audioKey} for ${itemId}`,
+        cause,
+      }),
+  });
+}
+
+function decodeAudioBinaryEffect(
+  itemId: string,
+  payload: ArrayBuffer,
+): Effect.Effect<AudioBuffer, SyncError, never> {
+  return Effect.try({
+    try: () => deserializeAudioBinary(payload),
+    catch: (cause) =>
+      new SyncError({
+        message: `Failed decoding downloaded audio for ${itemId}`,
+        cause,
+      }),
+  });
+}
+
+function hydrateSoundboardAudio(itemId: string, buffer: AudioBuffer): void {
+  const item = itemRegistry.get(itemId);
+  if (item?.loadAudioBuffer) {
+    item.loadAudioBuffer(buffer);
+  }
 }
 
 // --- Public API (Promise-based for callers) ---
@@ -137,7 +229,7 @@ export async function uploadAudio(
     pipe(
       uploadEffect(itemId, audioBuffer),
       Effect.catchAll((err) => {
-        console.error(`[AudioSync] ${err.message}`, err.cause);
+        logSyncError("upload", itemId, err, { message: err.message });
         return Effect.void;
       }),
     ),
@@ -157,41 +249,34 @@ export async function downloadAudioIfMissing(
   pendingDownloads.add(itemId);
 
   try {
-    // Check IndexedDB first
-    const ctx = new AudioContext();
-    const existing = await loadAudio(audioKey, ctx);
-    if (existing) {
-      markAudioKeyKnown(audioKey);
-      // Already have it locally, just make sure the soundboard knows
-      const item = itemRegistry.get(itemId);
-      if (item?.loadAudioBuffer) item.loadAudioBuffer(existing);
-      return;
-    }
-
-    // Fetch from R2 with retry
-    const arrayBuffer = await runPromise(
+    await runPromise(
       pipe(
-        downloadEffect(itemId),
+        Effect.gen(function* () {
+          const ctx = new AudioContext();
+          const existing = yield* loadAudioEffect(audioKey, ctx, itemId);
+          if (existing) {
+            yield* Effect.sync(() => {
+              markAudioKeyKnown(audioKey);
+              hydrateSoundboardAudio(itemId, existing);
+            });
+            return;
+          }
+
+          const arrayBuffer = yield* downloadEffect(itemId);
+          const buffer = yield* decodeAudioBinaryEffect(itemId, arrayBuffer);
+          yield* saveAudioEffect(audioKey, buffer, itemId);
+          yield* Effect.sync(() => {
+            markAudioKeyKnown(audioKey);
+            hydrateSoundboardAudio(itemId, buffer);
+            console.log(`[AudioSync] Downloaded audio for ${itemId}`);
+          });
+        }),
         Effect.catchAll((err) => {
-          console.error(`[AudioSync] ${err.message}`, err.cause);
-          return Effect.succeed(null);
+          logSyncError("download", itemId, err, { audioKey });
+          return Effect.void;
         }),
       ),
     );
-
-    if (!arrayBuffer) return;
-
-    const buffer = deserializeAudioBinary(arrayBuffer);
-    await saveAudio(audioKey, buffer);
-    markAudioKeyKnown(audioKey);
-
-    // Load into the soundboard component
-    const item = itemRegistry.get(itemId);
-    if (item?.loadAudioBuffer) {
-      item.loadAudioBuffer(buffer);
-    }
-
-    console.log(`[AudioSync] Downloaded audio for ${itemId}`);
   } finally {
     pendingDownloads.delete(itemId);
     const queuedKey = queuedDownloadKeys.get(itemId);
@@ -218,22 +303,15 @@ export async function uploadAllExistingAudio(
         entries,
         ([itemId, audioKey]) =>
           Effect.gen(function* () {
-            const buffer = yield* Effect.tryPromise({
-              try: () => loadAudio(audioKey, ctx),
-              catch: (cause) =>
-                new SyncError({
-                  message: `Failed loading audio ${audioKey} for ${itemId}`,
-                  cause,
-                }),
-            });
+            const buffer = yield* loadAudioEffect(audioKey, ctx, itemId);
             if (buffer) {
               yield* uploadEffect(itemId, buffer);
             }
           }),
-        { concurrency: 4 },
+        { concurrency: BATCH_UPLOAD_CONCURRENCY },
       ),
       Effect.catchAll((err) => {
-        console.error("[AudioSync] Batch upload error:", err);
+        logSyncError("upload-batch", "*", err);
         return Effect.void;
       }),
     ),
@@ -254,9 +332,32 @@ export function checkForNewAudioKeys(audioFiles: Record<string, string>): void {
 export function deleteAudioFromR2(itemId: string): void {
   if (!roomCode) return;
 
-  fetch(`/api/rooms/${roomCode}/audio/${itemId}`, { method: "DELETE" }).catch(
-    (err) => {
-      console.error(`[AudioSync] Delete failed for ${itemId}:`, err);
-    },
+  void runPromise(
+    pipe(
+      withRoomCode((room) =>
+        Effect.tryPromise({
+          try: () => fetch(`/api/rooms/${room}/audio/${itemId}`, { method: "DELETE" }),
+          catch: (cause) =>
+            new SyncError({
+              message: `Audio delete request failed for ${itemId}`,
+              cause,
+            }),
+        }),
+      ),
+      Effect.flatMap((response) =>
+        response.ok
+          ? Effect.void
+          : Effect.fail(
+              new SyncError({
+                message: `Audio delete failed for ${itemId}: HTTP ${response.status}`,
+              }),
+            ),
+      ),
+      Effect.catchAll((err) =>
+        Effect.sync(() => {
+          logSyncError("delete", itemId, err);
+        }),
+      ),
+    ),
   );
 }

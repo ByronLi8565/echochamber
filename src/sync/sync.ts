@@ -160,7 +160,10 @@ function handleJsonMessage(raw: string): void {
 
   const decoded = decodeServerJsonMessage(raw);
   if (Either.isLeft(decoded)) {
-    console.error("[Sync] Failed to parse JSON message:", decoded.left);
+    console.error(
+      `[Sync] Failed to parse JSON message (${decoded.left._tag}):`,
+      decoded.left.cause,
+    );
     return;
   }
 

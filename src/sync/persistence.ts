@@ -4,6 +4,7 @@
 
 import * as Automerge from "@automerge/automerge";
 import type { Doc } from "@automerge/automerge";
+import { Effect, pipe } from "effect";
 import {
   saveAudio,
   loadAudio,
@@ -16,6 +17,7 @@ import { notifyLocalChange, requestDeleteIntent } from "./sync.ts";
 import { deleteAudioFromR2 } from "./audio-sync.ts";
 import { normalizeSoundboardFilters } from "../util/soundboard-filters.ts";
 import { getConnectedSoundboardIds } from "../util/soundboard-graph.ts";
+import { runSync } from "../util/effect-runtime.ts";
 
 const STORAGE_KEY = "echochamber-doc";
 const VIEWPORT_STORAGE_KEY = "echochamber-viewport";
@@ -353,6 +355,38 @@ class Persistence {
     }
   }
 
+  private runPersistencePipeline(options: {
+    save: boolean;
+    notify: boolean;
+    sync: boolean;
+  }): Effect.Effect<void, never, never> {
+    return Effect.sync(() => {
+      if (options.save) this.scheduleSave();
+      if (options.notify) this.scheduleNotify();
+      if (options.sync && this.syncEnabled) {
+        notifyLocalChange();
+      }
+    });
+  }
+
+  private commitMutation(
+    mutate: () => void,
+    options: {
+      save: boolean;
+      notify: boolean;
+      sync: boolean;
+    },
+  ): void {
+    runSync(
+      pipe(
+        Effect.sync(() => {
+          mutate();
+        }),
+        Effect.tap(() => this.runPersistencePipeline(options)),
+      ),
+    );
+  }
+
   enableSync(): void {
     this.syncEnabled = true;
   }
@@ -379,13 +413,15 @@ class Persistence {
       `[Persistence] Remote doc items:`,
       Object.keys(newDoc.items ?? {}),
     );
-    this.doc = this.ensureDocShape(newDoc);
-    this.localEditsBlocked = false;
-    this.warnedAboutBlockedEdits = false;
-
-    this.scheduleSave();
-    this.scheduleNotify();
-    // NOTE: Do NOT call notifyLocalChange() here - we just received remote changes
+    this.commitMutation(
+      () => {
+        this.doc = this.ensureDocShape(newDoc);
+        this.localEditsBlocked = false;
+        this.warnedAboutBlockedEdits = false;
+      },
+      { save: true, notify: true, sync: false },
+    );
+    // NOTE: Do NOT call notifyLocalChange() here - this is a remote apply
   }
 
   // New generic change method
@@ -404,16 +440,16 @@ class Persistence {
       return;
     }
 
-    this.doc = Automerge.change(this.doc, (doc) => {
-      this.ensureMutableDocShape(doc);
-      changeFn(doc);
-      doc.metadata.lastModified = Date.now();
-    });
-    this.scheduleSave();
-    this.scheduleNotify();
-    if (this.syncEnabled) {
-      notifyLocalChange();
-    }
+    this.commitMutation(
+      () => {
+        this.doc = Automerge.change(this.doc, (doc) => {
+          this.ensureMutableDocShape(doc);
+          changeFn(doc);
+          doc.metadata.lastModified = Date.now();
+        });
+      },
+      { save: true, notify: true, sync: true },
+    );
   }
 
   // Convenience methods
@@ -560,17 +596,17 @@ class Persistence {
     // Use actor ID + counter to ensure globally unique IDs even with concurrent creation
     const actorId = Automerge.getActorId(this.doc);
     let counter = 0;
-    this.doc = Automerge.change(this.doc, (doc) => {
-      this.ensureMutableDocShape(doc);
-      counter = doc.nextItemId;
-      doc.nextItemId++;
-      doc.metadata.lastModified = Date.now();
-    });
-    this.scheduleSave();
-    this.scheduleNotify();
-    if (this.syncEnabled) {
-      notifyLocalChange();
-    }
+    this.commitMutation(
+      () => {
+        this.doc = Automerge.change(this.doc, (doc) => {
+          this.ensureMutableDocShape(doc);
+          counter = doc.nextItemId;
+          doc.nextItemId++;
+          doc.metadata.lastModified = Date.now();
+        });
+      },
+      { save: true, notify: true, sync: true },
+    );
     // Create a unique ID: first 8 chars of actor + counter
     const id = `${actorId.substring(0, 8)}-${counter!}`;
     console.log(

@@ -5,10 +5,12 @@ import {
   getReadableTextColor,
   updateSoundboardAdaptiveTextColor,
 } from "../core/soundboard.ts";
+import { ScopedListeners } from "../util/scoped-listeners.ts";
 
 let paintMode = false;
 let selectedColor = "#ff6b6b";
-let cleanupCaptureListener: (() => void) | null = null;
+let paintModeScope: ScopedListeners | null = null;
+let colorBucketScope: ScopedListeners | null = null;
 let paintModeChangeCallbacks: Array<(active: boolean) => void> = [];
 
 let btnBucket: HTMLButtonElement | null = null;
@@ -35,10 +37,8 @@ export function exitPaintMode(): void {
   btnBucket?.classList.remove("active");
   document.body.classList.remove("paint-mode");
 
-  if (cleanupCaptureListener) {
-    cleanupCaptureListener();
-    cleanupCaptureListener = null;
-  }
+  paintModeScope?.dispose();
+  paintModeScope = null;
 
   for (const cb of paintModeChangeCallbacks) {
     cb(false);
@@ -71,6 +71,8 @@ function enterPaintMode(): void {
   paintMode = true;
   btnBucket?.classList.add("active");
   document.body.classList.add("paint-mode");
+  paintModeScope?.dispose();
+  paintModeScope = new ScopedListeners();
 
   for (const cb of paintModeChangeCallbacks) {
     cb(true);
@@ -126,10 +128,7 @@ function enterPaintMode(): void {
     // Clicking anything else exits paint mode without intercepting
   };
 
-  document.addEventListener("click", handler, true);
-  cleanupCaptureListener = () => {
-    document.removeEventListener("click", handler, true);
-  };
+  paintModeScope.listen<MouseEvent>(document, "click", handler, true);
 }
 
 function updateBucketEnabled(enabled: boolean): void {
@@ -154,6 +153,10 @@ function updateBucketColorIndicator(): void {
 }
 
 export function initColorBucket(inRoom: boolean): void {
+  colorBucketScope?.dispose();
+  colorBucketScope = new ScopedListeners();
+  const scope = colorBucketScope;
+
   btnBucket = document.getElementById(
     "btn-color-bucket",
   ) as HTMLButtonElement | null;
@@ -172,15 +175,17 @@ export function initColorBucket(inRoom: boolean): void {
   updateBucketColorIndicator();
 
   if (inRoom) {
-    onSyncColorsChange((syncEnabled) => {
-      updateBucketEnabled(syncEnabled);
-      if (!syncEnabled && paintMode) {
-        exitPaintMode();
-      }
-    });
+    scope.addCleanup(
+      onSyncColorsChange((syncEnabled) => {
+        updateBucketEnabled(syncEnabled);
+        if (!syncEnabled && paintMode) {
+          exitPaintMode();
+        }
+      }),
+    );
   }
 
-  btnBucket.addEventListener("click", (e) => {
+  scope.listen<MouseEvent>(btnBucket, "click", (e) => {
     e.stopPropagation();
     if (btnBucket!.hasAttribute("disabled")) return;
 
@@ -193,18 +198,18 @@ export function initColorBucket(inRoom: boolean): void {
     colorInput!.click();
   });
 
-  colorInput.addEventListener("input", (e) => {
+  scope.listen<Event>(colorInput, "input", (e) => {
     selectedColor = (e.target as HTMLInputElement).value;
     updateBucketColorIndicator();
   });
 
-  colorInput.addEventListener("change", (e) => {
+  scope.listen<Event>(colorInput, "change", (e) => {
     selectedColor = (e.target as HTMLInputElement).value;
     updateBucketColorIndicator();
     enterPaintMode();
   });
 
-  document.addEventListener("keydown", (e) => {
+  scope.listen<KeyboardEvent>(document, "keydown", (e) => {
     if (e.key === "Escape" && paintMode) {
       exitPaintMode();
     }

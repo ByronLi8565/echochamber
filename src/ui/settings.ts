@@ -1,4 +1,5 @@
 import { forceResync, setSyncAudioEnabled } from "../sync/sync.ts";
+import { ScopedListeners } from "../util/scoped-listeners.ts";
 
 const SYNC_COLORS_KEY = "echochamber-sync-colors";
 const SYNC_AUDIO_KEY = "echochamber-sync-audio-enabled";
@@ -7,6 +8,7 @@ const SHOW_TOOLBAR_KEY = "echochamber-show-toolbar";
 
 let syncColorsEnabled: boolean = loadSyncColorsSetting();
 let syncColorsChangeCallbacks: Array<(enabled: boolean) => void> = [];
+let settingsScope: ScopedListeners | null = null;
 
 function loadSyncColorsSetting(): boolean {
   const stored = localStorage.getItem(SYNC_COLORS_KEY);
@@ -82,6 +84,10 @@ export function onSyncColorsChange(
 }
 
 export function initSettings(): void {
+  settingsScope?.dispose();
+  const scope = new ScopedListeners();
+  settingsScope = scope;
+
   const btnSettings = document.getElementById(
     "btn-settings",
   ) as HTMLButtonElement | null;
@@ -139,12 +145,12 @@ export function initSettings(): void {
   updateToolbarToggleUI();
   refreshFeatherIcons();
 
-  btnSettings.addEventListener("click", (e) => {
+  scope.listen<MouseEvent>(btnSettings, "click", (e) => {
     e.stopPropagation();
     settingsPanel.classList.toggle("visible");
   });
 
-  document.addEventListener("click", (e) => {
+  scope.listen<MouseEvent>(document, "click", (e) => {
     if (
       settingsPanel.classList.contains("visible") &&
       !settingsPanel.contains(e.target as Node) &&
@@ -154,7 +160,7 @@ export function initSettings(): void {
     }
   });
 
-  toggleSyncColors.addEventListener("change", () => {
+  scope.listen<Event>(toggleSyncColors, "change", () => {
     const newValue = toggleSyncColors.checked;
     syncColorsEnabled = newValue;
     saveSyncColorsSetting(newValue);
@@ -168,13 +174,13 @@ export function initSettings(): void {
     }
   });
 
-  toggleSyncAudio.addEventListener("change", () => {
+  scope.listen<Event>(toggleSyncAudio, "change", () => {
     const enabled = toggleSyncAudio.checked;
     setSyncAudioEnabled(enabled);
     saveSyncAudioSetting(enabled);
   });
 
-  btnToggleProps.addEventListener("click", (e) => {
+  scope.listen<MouseEvent>(btnToggleProps, "click", (e) => {
     e.stopPropagation();
     showPropBubbles = !showPropBubbles;
     applyPropBubblesVisibility(showPropBubbles);
@@ -183,7 +189,7 @@ export function initSettings(): void {
     refreshFeatherIcons();
   });
 
-  btnToggleToolbar.addEventListener("click", (e) => {
+  scope.listen<MouseEvent>(btnToggleToolbar, "click", (e) => {
     e.stopPropagation();
     showToolbar = !showToolbar;
     applyToolbarVisibility(showToolbar);

@@ -1,3 +1,4 @@
+import { Effect, Fiber } from "effect";
 import type { CanvasItem } from "./items.ts";
 import { duplicateItem, generateId, removeItem } from "./items.ts";
 import { consumeDrag } from "./drag.ts";
@@ -26,6 +27,7 @@ import {
   destroyCounterBadge,
 } from "../ui/counter-badge.ts";
 import { normalizeSoundboardFilters } from "../util/soundboard-filters.ts";
+import { runFork, runSync } from "../util/effect-runtime.ts";
 
 // --- Shared audio infrastructure ---
 
@@ -443,16 +445,14 @@ export function createSoundboard(
   const loopDelayRow = settingsPanel.querySelector(
     ".soundboard-setting-row.loop-delay",
   ) as HTMLElement;
-  const playbackTimers = new Set<number>();
-  let loopingTimerId: number | null = null;
+  let playbackFiber: Fiber.RuntimeFiber<void, never> | null = null;
   let settingsPanelVisible = false;
 
   function clearPlaybackTimers(): void {
-    for (const timerId of playbackTimers) clearTimeout(timerId);
-    playbackTimers.clear();
-    if (loopingTimerId !== null) {
-      clearTimeout(loopingTimerId);
-      loopingTimerId = null;
+    if (playbackFiber) {
+      const runningFiber = playbackFiber;
+      playbackFiber = null;
+      runSync(Fiber.interrupt(runningFiber));
     }
     // Clear visual feedback
     hideBadge(bubble);
@@ -548,6 +548,7 @@ export function createSoundboard(
   // --- Recording ---
   async function startRecording() {
     try {
+      clearPlaybackTimers();
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunks = [];
       mediaRecorder = new MediaRecorder(stream);
@@ -660,73 +661,80 @@ export function createSoundboard(
     }
 
     // Visual feedback for playback type
-    let currentRepeat = 1;
-    const playSequence = (): number => {
-      const singleDuration = playOnce();
+    const sequenceDurationMs =
+      repeatCount * estimatedDurationMs + (repeatCount - 1) * repeatDelayMs;
+    const loopDelayMs = Math.max(0, snapshot.loopDelaySeconds * 1000);
+    const waitFor = (ms: number): Effect.Effect<void, never, never> => {
+      if (ms <= 0) return Effect.void;
+      return Effect.sleep(`${Math.round(ms)} millis`);
+    };
 
-      // Animate progress ring for first play
-      if (currentRepeat === 1) {
-        if (isLooping) {
-          showLoopingAnimation(bubble, "var(--state-purple)");
-        } else {
-          const color = hasLinks ? "var(--state-orange)" : "var(--state-cyan)";
-          animateProgress(bubble, singleDuration, { color });
+    let playbackSequenceFiber!: Fiber.RuntimeFiber<void, never>;
+    const runSequenceEffect = Effect.gen(function* () {
+      for (let i = 0; i < repeatCount; i++) {
+        const currentRepeat = i + 1;
+        const playDuration = playOnce();
+
+        if (currentRepeat === 1) {
+          if (isLooping) {
+            showLoopingAnimation(bubble, "var(--state-purple)");
+          } else {
+            const color = hasLinks ? "var(--state-orange)" : "var(--state-cyan)";
+            animateProgress(bubble, playDuration, { color });
+          }
+        } else if (hasRepeats && !isLooping) {
+          showRepeatBadge(bubble, currentRepeat, repeatCount);
+          resetProgress(bubble);
+          animateProgress(bubble, playDuration, {
+            color: "var(--state-cyan)",
+            onComplete:
+              currentRepeat === repeatCount
+                ? () => {
+                    hideBadge(bubble);
+                    clearProgress(bubble);
+                  }
+                : undefined,
+          });
+        }
+
+        yield* waitFor(playDuration);
+        if (i < repeatCount - 1) {
+          yield* waitFor(repeatDelayMs);
+        }
+      }
+    });
+
+    const playbackEffect = Effect.gen(function* () {
+      if (snapshot.loopEnabled) {
+        while (true) {
+          yield* runSequenceEffect;
+          yield* waitFor(loopDelayMs);
         }
       }
 
-      for (let i = 1; i < repeatCount; i++) {
-        const nextDelayMs = i * (estimatedDurationMs + repeatDelayMs);
-        const timerId = window.setTimeout(() => {
-          playbackTimers.delete(timerId);
-          currentRepeat = i + 1;
-          const playDuration = playOnce();
-
-          // Update badge and progress ring for each repeat
-          if (hasRepeats && !isLooping) {
-            showRepeatBadge(bubble, currentRepeat, repeatCount);
-            resetProgress(bubble);
-            animateProgress(bubble, playDuration, {
-              color: "var(--state-cyan)",
-              onComplete:
-                currentRepeat === repeatCount
-                  ? () => {
-                      hideBadge(bubble);
-                      clearProgress(bubble);
-                    }
-                  : undefined,
-            });
-          }
-        }, nextDelayMs);
-        playbackTimers.add(timerId);
-      }
-      return (
-        repeatCount * estimatedDurationMs + (repeatCount - 1) * repeatDelayMs
-      );
-    };
-
-    const sequenceDurationMs = playSequence();
-
-    if (snapshot.loopEnabled) {
-      const scheduleLoop = () => {
-        const loopDelayMs = Math.max(0, snapshot.loopDelaySeconds * 1000);
-        currentRepeat = 1;
-        const duration = playSequence();
-        loopingTimerId = window.setTimeout(
-          scheduleLoop,
-          duration + loopDelayMs,
-        );
-      };
-      loopingTimerId = window.setTimeout(
-        scheduleLoop,
-        sequenceDurationMs + snapshot.loopDelaySeconds * 1000,
-      );
-    } else if (!hasRepeats) {
-      // Single play - clear visuals after completion
-      setTimeout(() => {
+      yield* runSequenceEffect;
+      if (!hasRepeats) {
         hideBadge(bubble);
         clearProgress(bubble);
-      }, sequenceDurationMs);
-    }
+      }
+    }).pipe(
+      Effect.onInterrupt(() =>
+        Effect.sync(() => {
+          hideBadge(bubble);
+          clearProgress(bubble);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (playbackFiber === playbackSequenceFiber) {
+            playbackFiber = null;
+          }
+        }),
+      ),
+    );
+
+    playbackSequenceFiber = runFork(playbackEffect);
+    playbackFiber = playbackSequenceFiber;
 
     if (!fromRemote) {
       sendAudioPlayEvent(id);
@@ -769,6 +777,7 @@ export function createSoundboard(
     e.stopPropagation();
     if (consumeDrag(wrapper)) return;
     if (state === "recording") return;
+    clearPlaybackTimers();
     startRecording();
   });
 
@@ -781,6 +790,7 @@ export function createSoundboard(
   deleteBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (consumeDrag(wrapper)) return;
+    clearPlaybackTimers();
     removeItem(id);
   });
 

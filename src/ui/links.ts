@@ -1,18 +1,23 @@
+import { Effect, Fiber } from "effect";
 import { consumeDrag } from "../core/drag.ts";
 import { persistence } from "../sync/persistence.ts";
 import {
   getSequentialSoundboardSteps,
   type SequentialPlaybackStep,
 } from "../util/soundboard-graph.ts";
+import { runFork, runSync } from "../util/effect-runtime.ts";
+import { ScopedListeners } from "../util/scoped-listeners.ts";
 
 type ModeChangeCallback = (active: boolean) => void;
 type PlaybackHandler = (fromRemote: boolean) => number;
 
 const playbackHandlers = new Map<string, PlaybackHandler>();
+const sequentialPlaybackFibers = new Map<string, Fiber.RuntimeFiber<void, never>>();
 let linkMode = false;
 let modeChangeCallbacks: ModeChangeCallback[] = [];
 let selectedItemId: string | null = null;
-let cleanupCaptureListener: (() => void) | null = null;
+let linkModeScope: ScopedListeners | null = null;
+let linksScope: ScopedListeners | null = null;
 let renderQueued = false;
 let overlaySvg: SVGSVGElement | null = null;
 let btnLink: HTMLButtonElement | null = null;
@@ -159,6 +164,8 @@ function enterLinkMode(): void {
   btnLink?.classList.add("active");
   document.body.classList.add("link-mode");
   emitModeChange(true);
+  linkModeScope?.dispose();
+  linkModeScope = new ScopedListeners();
 
   const handler = (e: MouseEvent): void => {
     if (!linkMode) return;
@@ -191,10 +198,7 @@ function enterLinkMode(): void {
     exitLinkMode();
   };
 
-  document.addEventListener("click", handler, true);
-  cleanupCaptureListener = () => {
-    document.removeEventListener("click", handler, true);
-  };
+  linkModeScope.listen<MouseEvent>(document, "click", handler, true);
 }
 
 export function isLinkMode(): boolean {
@@ -215,16 +219,18 @@ export function exitLinkMode(): void {
   document.body.classList.remove("link-mode");
   exitLinkModeSelection();
 
-  if (cleanupCaptureListener) {
-    cleanupCaptureListener();
-    cleanupCaptureListener = null;
-  }
+  linkModeScope?.dispose();
+  linkModeScope = null;
 
   emitModeChange(false);
   scheduleRender();
 }
 
 export function initLinksTool(): void {
+  linksScope?.dispose();
+  linksScope = new ScopedListeners();
+  const scope = linksScope;
+
   btnLink = document.getElementById(
     "btn-link-mode",
   ) as HTMLButtonElement | null;
@@ -241,7 +247,7 @@ export function initLinksTool(): void {
     container.appendChild(overlaySvg);
   }
 
-  btnLink.addEventListener("click", (e) => {
+  scope.listen<MouseEvent>(btnLink, "click", (e) => {
     e.stopPropagation();
     if (linkMode) {
       exitLinkMode();
@@ -251,16 +257,19 @@ export function initLinksTool(): void {
     scheduleRender();
   });
 
-  document.addEventListener("keydown", (e) => {
+  scope.listen<KeyboardEvent>(document, "keydown", (e) => {
     if (e.key === "Escape" && linkMode) {
       exitLinkMode();
     }
   });
 
-  persistence.subscribeGlobal(() => {
-    scheduleRender();
-  });
-  document.addEventListener(
+  scope.addCleanup(
+    persistence.subscribeGlobal(() => {
+      scheduleRender();
+    }),
+  );
+  scope.listen<PointerEvent>(
+    document,
     "pointermove",
     (e) => {
       if (e.buttons !== 0) {
@@ -269,25 +278,32 @@ export function initLinksTool(): void {
     },
     true,
   );
-  document.addEventListener(
+  scope.listen<PointerEvent>(
+    document,
     "pointerup",
     () => {
       scheduleRender();
     },
     true,
   );
-  document.addEventListener("pointercancel", () => {
+  scope.listen<PointerEvent>(document, "pointercancel", () => {
     scheduleRender();
   });
-  window.addEventListener("resize", () => {
+  scope.listen<Event>(window, "resize", () => {
     scheduleRender();
   });
-  document.getElementById("btn-zoom-in")?.addEventListener("click", () => {
-    scheduleRender();
-  });
-  document.getElementById("btn-zoom-out")?.addEventListener("click", () => {
-    scheduleRender();
-  });
+  const zoomInButton = document.getElementById("btn-zoom-in");
+  const zoomOutButton = document.getElementById("btn-zoom-out");
+  if (zoomInButton) {
+    scope.listen<MouseEvent>(zoomInButton, "click", () => {
+      scheduleRender();
+    });
+  }
+  if (zoomOutButton) {
+    scope.listen<MouseEvent>(zoomOutButton, "click", () => {
+      scheduleRender();
+    });
+  }
 
   scheduleRender();
 }
@@ -306,42 +322,74 @@ export function registerSoundboardPlayback(
 
 export function unregisterSoundboardPlayback(itemId: string): void {
   playbackHandlers.delete(itemId);
+  cancelAllSequentialPlayback();
   if (selectedItemId === itemId) {
     setSelectedItem(null);
   }
   scheduleRender();
 }
 
+function cancelSequentialPlayback(originItemId: string): void {
+  const fiber = sequentialPlaybackFibers.get(originItemId);
+  if (!fiber) return;
+  sequentialPlaybackFibers.delete(originItemId);
+  runSync(Fiber.interrupt(fiber));
+}
+
+function cancelAllSequentialPlayback(): void {
+  for (const [originItemId, fiber] of sequentialPlaybackFibers) {
+    sequentialPlaybackFibers.delete(originItemId);
+    runSync(Fiber.interrupt(fiber));
+  }
+}
+
 export function requestLinkedPlayback(
   originItemId: string,
   fromRemote: boolean = false,
 ): void {
+  cancelSequentialPlayback(originItemId);
+
   const playConcurrently = isConcurrentPlaybackEnabled(originItemId);
   if (!playConcurrently) {
     const steps = buildSequentialPlaybackSteps(originItemId);
     if (steps.length === 0) return;
 
-    const playStep = (index: number): void => {
-      const step = steps[index];
-      if (!step) return;
-      if (step.parentId) {
-        animateLinkBetween(step.parentId, step.itemId);
+    let sequenceFiber!: Fiber.RuntimeFiber<void, never>;
+    const runSequence = Effect.gen(function* () {
+      for (let index = 0; index < steps.length; index++) {
+        const step = steps[index];
+        if (!step) continue;
+        if (step.parentId) {
+          yield* Effect.sync(() => {
+            animateLinkBetween(step.parentId!, step.itemId);
+          });
+        }
+
+        const duration = yield* Effect.sync(() => {
+          const handler = playbackHandlers.get(step.itemId);
+          return handler
+            ? handler(step.itemId === originItemId ? fromRemote : true)
+            : 0;
+        });
+
+        if (index >= steps.length - 1) continue;
+        const nextDelay = Number.isFinite(duration) && duration > 0 ? duration : 0;
+        if (nextDelay > 0) {
+          yield* Effect.sleep(`${Math.round(nextDelay)} millis`);
+        }
       }
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (sequentialPlaybackFibers.get(originItemId) === sequenceFiber) {
+            sequentialPlaybackFibers.delete(originItemId);
+          }
+        }),
+      ),
+    );
 
-      const handler = playbackHandlers.get(step.itemId);
-      const duration = handler
-        ? handler(step.itemId === originItemId ? fromRemote : true)
-        : 0;
-      if (index >= steps.length - 1) return;
-
-      const nextDelay =
-        Number.isFinite(duration) && duration > 0 ? duration : 0;
-      window.setTimeout(() => {
-        playStep(index + 1);
-      }, nextDelay);
-    };
-
-    playStep(0);
+    sequenceFiber = runFork(runSequence);
+    sequentialPlaybackFibers.set(originItemId, sequenceFiber);
     return;
   }
 

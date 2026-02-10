@@ -1,4 +1,5 @@
 import { persistence } from "../sync/persistence.ts";
+import { ScopedListeners } from "../util/scoped-listeners.ts";
 
 const container = document.getElementById("canvas-container")!;
 const world = document.getElementById("canvas-world")!;
@@ -12,6 +13,7 @@ let panStartY = 0;
 let panStartOffsetX = 0;
 let panStartOffsetY = 0;
 let viewportSaveTimeout: number | null = null;
+const canvasListeners = new ScopedListeners();
 
 function applyTransform() {
   world.style.transformOrigin = "0 0";
@@ -24,7 +26,7 @@ export function restoreViewport(x: number, y: number) {
   applyTransform();
 }
 
-container.addEventListener("pointerdown", (e) => {
+canvasListeners.listen<PointerEvent>(container, "pointerdown", (e) => {
   // Only pan if clicking directly on the container or world (not on an item)
   if (e.target !== container && e.target !== world) return;
   // Only left mouse button
@@ -39,14 +41,14 @@ container.addEventListener("pointerdown", (e) => {
   container.setPointerCapture(e.pointerId);
 });
 
-container.addEventListener("pointermove", (e) => {
+canvasListeners.listen<PointerEvent>(container, "pointermove", (e) => {
   if (!isPanning) return;
   offsetX = panStartOffsetX + (e.clientX - panStartX);
   offsetY = panStartOffsetY + (e.clientY - panStartY);
   applyTransform();
 });
 
-container.addEventListener("pointerup", (e) => {
+canvasListeners.listen<PointerEvent>(container, "pointerup", (e) => {
   if (!isPanning) return;
   isPanning = false;
   container.classList.remove("panning");

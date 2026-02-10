@@ -1,5 +1,6 @@
 import type { CanvasItem } from "./items.ts";
 import { persistence } from "../sync/persistence.ts";
+import { ScopedListeners } from "../util/scoped-listeners.ts";
 
 const DRAG_THRESHOLD = 4;
 
@@ -9,6 +10,7 @@ let highestZIndex = 1000;
 
 export function makeDraggable(item: CanvasItem) {
   const el = item.element;
+  const scope = new ScopedListeners();
   let isDragging = false;
   let didDrag = false;
   let dragStartX = 0;
@@ -21,7 +23,7 @@ export function makeDraggable(item: CanvasItem) {
   // Initialize z-index
   el.style.zIndex = String(highestZIndex++);
 
-  el.addEventListener("pointerdown", (e) => {
+  scope.listen<PointerEvent>(el, "pointerdown", (e) => {
     const target = e.target as HTMLElement;
     if (target.isContentEditable) return;
     if (e.button !== 0) return;
@@ -54,7 +56,7 @@ export function makeDraggable(item: CanvasItem) {
     e.stopPropagation();
   });
 
-  el.addEventListener("pointermove", (e) => {
+  scope.listen<PointerEvent>(el, "pointermove", (e) => {
     if (!isDragging) return;
     const dx = e.clientX - dragStartX;
     const dy = e.clientY - dragStartY;
@@ -74,7 +76,7 @@ export function makeDraggable(item: CanvasItem) {
     e.stopPropagation();
   });
 
-  el.addEventListener("pointerup", (e) => {
+  scope.listen<PointerEvent>(el, "pointerup", (e) => {
     if (!isDragging) return;
     isDragging = false;
     currentlyDraggingId = null;
@@ -88,7 +90,7 @@ export function makeDraggable(item: CanvasItem) {
     e.stopPropagation();
   });
 
-  el.addEventListener("pointercancel", () => {
+  scope.listen<PointerEvent>(el, "pointercancel", () => {
     if (!isDragging) return;
     isDragging = false;
     currentlyDraggingId = null;
@@ -109,6 +111,7 @@ export function makeDraggable(item: CanvasItem) {
 
   // Store cleanup function on the item
   (item as any).cleanupDrag = () => {
+    scope.dispose();
     if (unsubscribe) unsubscribe();
   };
 }

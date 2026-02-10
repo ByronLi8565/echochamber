@@ -1,4 +1,4 @@
-import { Either, Schema } from "effect";
+import { Either, ParseResult, Schema } from "effect";
 
 const ConnectionCountMessageSchema = Schema.Struct({
   type: Schema.Literal("connectionCount"),
@@ -28,6 +28,15 @@ export type DestructiveIntentMessage = Schema.Schema.Type<
 
 export type ServerJsonMessage = ConnectionCountMessage | AudioPlayMessage;
 export type ClientJsonMessage = AudioPlayMessage | DestructiveIntentMessage;
+export type SyncProtocolDecodeError =
+  | {
+      _tag: "InvalidJson";
+      cause: unknown;
+    }
+  | {
+      _tag: "InvalidPayload";
+      cause: ParseResult.ParseError;
+    };
 
 const decodeConnectionCount = Schema.decodeUnknownEither(
   ConnectionCountMessageSchema,
@@ -40,12 +49,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function decodeServerJsonMessage(
   raw: string,
-): Either.Either<ServerJsonMessage | null, unknown> {
+): Either.Either<ServerJsonMessage | null, SyncProtocolDecodeError> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    return Either.left(error);
+    return Either.left({
+      _tag: "InvalidJson",
+      cause: error,
+    });
   }
 
   if (!isRecord(parsed) || typeof parsed.type !== "string") {
@@ -54,9 +66,15 @@ export function decodeServerJsonMessage(
 
   switch (parsed.type) {
     case "connectionCount":
-      return decodeConnectionCount(parsed);
+      return Either.mapLeft(decodeConnectionCount(parsed), (cause) => ({
+        _tag: "InvalidPayload" as const,
+        cause,
+      }));
     case "audioPlay":
-      return decodeAudioPlay(parsed);
+      return Either.mapLeft(decodeAudioPlay(parsed), (cause) => ({
+        _tag: "InvalidPayload" as const,
+        cause,
+      }));
     default:
       return Either.right(null);
   }

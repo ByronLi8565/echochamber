@@ -1,6 +1,6 @@
-import { Effect, pipe } from "effect";
+import { Effect, Fiber, Queue, Ref, pipe } from "effect";
 import { WebSocket as ReconnectingWebSocket } from "partysocket";
-import { runSync } from "../util/effect-runtime.ts";
+import { runFork, runSync } from "../util/effect-runtime.ts";
 
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 30000;
@@ -13,22 +13,38 @@ interface SyncClientHandlers {
   onBinaryMessage: (payload: ArrayBuffer) => void;
 }
 
+type OutboundPayload = string | ArrayBuffer | ArrayBufferView;
+
 export class SyncClient {
   private socket: ReconnectingWebSocket | null = null;
+  private socketRef!: Ref.Ref<ReconnectingWebSocket | null>;
+  private sendQueue!: Queue.Queue<OutboundPayload>;
+  private sendFiber: Fiber.RuntimeFiber<void, never> | null = null;
 
   constructor(
     private readonly roomCode: string,
     private readonly handlers: SyncClientHandlers,
-  ) {}
+  ) {
+    this.initializeState();
+  }
 
   start(): void {
     this.stop();
+    this.initializeState();
+    this.startSendWorker();
     this.connect();
   }
 
   stop(): void {
+    const fiber = this.sendFiber;
+    this.sendFiber = null;
+    if (fiber) {
+      runSync(Fiber.interrupt(fiber));
+    }
+
     const socket = this.socket;
     this.socket = null;
+    runSync(Ref.set(this.socketRef, null));
     if (socket) {
       socket.close(1000, "sync-stop");
     }
@@ -39,32 +55,64 @@ export class SyncClient {
   }
 
   sendJson(raw: string): boolean {
-    return this.sendWithEffect((socket) => {
-      socket.send(raw);
-    });
+    return this.enqueue(raw);
   }
 
   sendBinary(payload: ArrayBuffer | ArrayBufferView): boolean {
-    return this.sendWithEffect((socket) => {
-      socket.send(payload);
-    });
+    return this.enqueue(payload);
   }
 
-  private sendWithEffect(send: (socket: ReconnectingWebSocket) => void): boolean {
+  private initializeState(): void {
+    const state = runSync(
+      Effect.gen(function* () {
+        const socketRef = yield* Ref.make<ReconnectingWebSocket | null>(null);
+        const sendQueue = yield* Queue.unbounded<OutboundPayload>();
+        return { socketRef, sendQueue };
+      }),
+    );
+
+    this.socketRef = state.socketRef;
+    this.sendQueue = state.sendQueue;
+  }
+
+  private enqueue(payload: OutboundPayload): boolean {
+    if (!this.isOpen()) return false;
+
     return runSync(
       pipe(
-        Effect.try({
-          try: () => {
-            const socket = this.socket;
-            if (!socket || socket.readyState !== 1) {
-              return false;
-            }
-            send(socket);
-            return true;
-          },
-          catch: () => false,
-        }),
+        Queue.offer(this.sendQueue, payload),
         Effect.catchAll(() => Effect.succeed(false)),
+      ),
+    );
+  }
+
+  private startSendWorker(): void {
+    const queue = this.sendQueue;
+    const socketRef = this.socketRef;
+    this.sendFiber = runFork(
+      Effect.forever(
+        pipe(
+          Queue.take(queue),
+          Effect.flatMap((payload) =>
+            pipe(
+              Ref.get(socketRef),
+              Effect.flatMap((socket) =>
+                Effect.try({
+                  try: () => {
+                    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+                    if (typeof payload === "string" || payload instanceof ArrayBuffer) {
+                      socket.send(payload);
+                      return;
+                    }
+                    socket.send(payload as ArrayBufferView<ArrayBuffer>);
+                  },
+                  catch: () => undefined,
+                }),
+              ),
+            ),
+          ),
+          Effect.catchAll(() => Effect.void),
+        ),
       ),
     );
   }
@@ -79,6 +127,7 @@ export class SyncClient {
     });
     socket.binaryType = "arraybuffer";
     this.socket = socket;
+    runSync(Ref.set(this.socketRef, socket));
 
     socket.addEventListener("open", () => {
       if (this.socket !== socket) return;

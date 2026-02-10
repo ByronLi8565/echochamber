@@ -2,6 +2,9 @@
  * IndexedDB-based audio storage for AudioBuffer data
  */
 
+import { Effect, pipe } from "effect";
+import { runPromise, StorageError } from "../util/effect-runtime.ts";
+
 const DB_NAME = "echochamber-audio";
 const DB_VERSION = 1;
 const STORE_NAME = "audioBuffers";
@@ -49,6 +52,43 @@ function openDatabase(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
+function openDatabaseEffect(): Effect.Effect<IDBDatabase, StorageError, never> {
+  return Effect.tryPromise({
+    try: () => openDatabase(),
+    catch: (cause) =>
+      new StorageError({
+        message: "Failed to open IndexedDB audio database",
+        cause,
+      }),
+  });
+}
+
+function runDbRequestEffect<T>(
+  mode: IDBTransactionMode,
+  runRequest: (store: IDBObjectStore) => IDBRequest<T>,
+): Effect.Effect<T, StorageError, never> {
+  return pipe(
+    openDatabaseEffect(),
+    Effect.flatMap((db) =>
+      Effect.tryPromise({
+        try: () =>
+          new Promise<T>((resolve, reject) => {
+            const transaction = db.transaction([STORE_NAME], mode);
+            const store = transaction.objectStore(STORE_NAME);
+            const request = runRequest(store);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => resolve(request.result);
+          }),
+        catch: (cause) =>
+          new StorageError({
+            message: `IndexedDB ${mode} transaction failed`,
+            cause,
+          }),
+      }),
+    ),
+  );
+}
+
 export function serializeAudioBuffer(
   buffer: AudioBuffer,
 ): SerializedAudioBuffer {
@@ -90,70 +130,40 @@ export async function saveAudio(
   key: string,
   buffer: AudioBuffer,
 ): Promise<void> {
-  const db = await openDatabase();
   const serialized = serializeAudioBuffer(buffer);
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], "readwrite");
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.put(serialized, key);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve();
-  });
+  await runPromise(
+    pipe(
+      runDbRequestEffect("readwrite", (store) => store.put(serialized, key)),
+      Effect.asVoid,
+    ),
+  );
 }
 
 export async function loadAudio(
   key: string,
   audioContext: AudioContext,
 ): Promise<AudioBuffer | null> {
-  const db = await openDatabase();
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], "readonly");
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.get(key);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => {
-      const data = request.result as StoredAudioBuffer | undefined;
-      if (data) {
-        if (data.roomCode !== activeRoomCode) {
-          resolve(null);
-          return;
-        }
-        resolve(
-          deserializeAudioBuffer(data as SerializedAudioBuffer, audioContext),
-        );
-      } else {
-        resolve(null);
-      }
-    };
-  });
+  const data = await runPromise(
+    runDbRequestEffect<StoredAudioBuffer | undefined>("readonly", (store) =>
+      store.get(key),
+    ),
+  );
+  if (!data) return null;
+  if (data.roomCode !== activeRoomCode) return null;
+  return deserializeAudioBuffer(data as SerializedAudioBuffer, audioContext);
 }
 
 export async function deleteAudio(key: string): Promise<void> {
-  const db = await openDatabase();
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], "readwrite");
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.delete(key);
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve();
-  });
+  await runPromise(
+    pipe(
+      runDbRequestEffect("readwrite", (store) => store.delete(key)),
+      Effect.asVoid,
+    ),
+  );
 }
 
 export async function getAllAudioKeys(): Promise<string[]> {
-  const db = await openDatabase();
-
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction([STORE_NAME], "readonly");
-    const store = transaction.objectStore(STORE_NAME);
-    const request = store.getAllKeys();
-
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result as string[]);
-  });
+  return runPromise(
+    runDbRequestEffect<IDBValidKey[]>("readonly", (store) => store.getAllKeys()),
+  ).then((keys) => keys.map((key) => String(key)));
 }
