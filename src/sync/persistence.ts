@@ -85,6 +85,7 @@ interface EchoChamberDoc {
 interface ViewportState {
   offsetX: number;
   offsetY: number;
+  scale?: number;
 }
 
 // Subscription types
@@ -226,7 +227,7 @@ class Persistence {
   private loadViewport(): ViewportState {
     const stored = localStorage.getItem(VIEWPORT_STORAGE_KEY);
     if (!stored) {
-      return { offsetX: 0, offsetY: 0 };
+      return { offsetX: 0, offsetY: 0, scale: 1 };
     }
 
     try {
@@ -235,7 +236,11 @@ class Persistence {
         typeof parsed.offsetX === "number" &&
         typeof parsed.offsetY === "number"
       ) {
-        return { offsetX: parsed.offsetX, offsetY: parsed.offsetY };
+        return {
+          offsetX: parsed.offsetX,
+          offsetY: parsed.offsetY,
+          scale: typeof parsed.scale === "number" ? parsed.scale : 1,
+        };
       }
     } catch (error) {
       console.error("Failed to load viewport:", error);
@@ -524,9 +529,9 @@ class Persistence {
     });
   }
 
-  updateViewport(offsetX: number, offsetY: number): void {
+  updateViewport(offsetX: number, offsetY: number, scale?: number): void {
     this.changeLocal(() => {
-      this.viewport = { offsetX, offsetY };
+      this.viewport = { offsetX, offsetY, scale: scale ?? this.viewport.scale ?? 1 };
       this.saveViewport();
     });
   }

@@ -982,3 +982,104 @@ body.hide-toolbar #toolbar {
         left: 12px;
     }
 }
+
+/* ===== Permission Alert ===== */
+
+.permission-alert {
+    position: fixed;
+    top: 80px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    z-index: 500;
+    background: var(--bg-surface);
+    border: 2px solid var(--state-orange);
+    border-radius: 12px;
+    padding: 16px 20px;
+    box-shadow: 0 8px 32px var(--shadow-lg);
+    opacity: 0;
+    pointer-events: none;
+    transition:
+        opacity 0.3s ease,
+        transform 0.3s ease;
+    max-width: 400px;
+    width: calc(100vw - 32px);
+}
+
+.permission-alert.visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%) translateY(0);
+}
+
+.permission-alert-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.permission-alert-icon {
+    font-size: 24px;
+    flex-shrink: 0;
+}
+
+.permission-alert-text {
+    flex: 1;
+    min-width: 200px;
+}
+
+.permission-alert-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.permission-alert-message {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.permission-alert-button {
+    padding: 8px 16px;
+    border: 1px solid var(--accent-primary);
+    border-radius: 8px;
+    background: var(--accent-primary);
+    color: var(--text-bright);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+        background 0.15s,
+        border-color 0.15s,
+        transform 0.1s;
+    flex-shrink: 0;
+}
+
+.permission-alert-button:hover {
+    background: var(--bg-hover);
+    border-color: var(--bg-hover);
+    transform: scale(1.02);
+}
+
+@media (max-width: 600px) {
+    .permission-alert {
+        top: 70px;
+        padding: 12px 16px;
+    }
+
+    .permission-alert-content {
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .permission-alert-text {
+        min-width: auto;
+    }
+
+    .permission-alert-button {
+        width: 100%;
+        margin-top: 8px;
+    }
+}
