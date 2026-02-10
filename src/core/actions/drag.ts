@@ -1,6 +1,6 @@
-import type { CanvasItem } from "./items.ts";
-import { persistence } from "../sync/persistence.ts";
-import { ScopedListeners } from "../util/scoped-listeners.ts";
+import type { CanvasItem } from "../items.ts";
+import { persistence } from "../../sync/persistence.ts";
+import { ScopedListeners } from "../../util/utils.ts";
 
 const DRAG_THRESHOLD = 4;
 
@@ -35,7 +35,9 @@ export function makeDraggable(item: CanvasItem) {
 
     // Only drag if this element is on top at the click location
     const elementsAtPoint = document.elementsFromPoint(e.clientX, e.clientY);
-    const topCanvasItem = elementsAtPoint.find((elem) => elem.classList.contains("canvas-item"));
+    const topCanvasItem = elementsAtPoint.find((elem) =>
+      elem.classList.contains("canvas-item"),
+    );
     if (topCanvasItem !== el) {
       // Not the topmost item, don't drag
       return;
@@ -110,7 +112,7 @@ export function makeDraggable(item: CanvasItem) {
   });
 
   // Store cleanup function on the item
-  (item as any).cleanupDrag = () => {
+  item.cleanupDrag = () => {
     scope.dispose();
     if (unsubscribe) unsubscribe();
   };

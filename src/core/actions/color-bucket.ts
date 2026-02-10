@@ -1,11 +1,11 @@
-import { persistence } from "../sync/persistence.ts";
-import { isSyncColorsEnabled, onSyncColorsChange } from "./settings.ts";
+import { persistence } from "../../sync/persistence.ts";
+import { isSyncColorsEnabled, onSyncColorsChange } from "../../ui/settings.ts";
 import { invalidateLinksOverlay } from "./links.ts";
 import {
   getReadableTextColor,
   updateSoundboardAdaptiveTextColor,
-} from "../core/soundboard.ts";
-import { ScopedListeners } from "../util/scoped-listeners.ts";
+} from "../soundboard/index.ts";
+import { ScopedListeners } from "../../util/utils.ts";
 
 let paintMode = false;
 let selectedColor = "#ff6b6b";

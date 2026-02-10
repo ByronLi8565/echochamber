@@ -1,5 +1,5 @@
 import { persistence } from "../sync/persistence.ts";
-import { ScopedListeners } from "../util/scoped-listeners.ts";
+import { ScopedListeners } from "../util/utils.ts";
 import {
   initMobileGestures,
   updateGestureState,

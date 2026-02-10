@@ -1,4 +1,8 @@
-import { ScopedListeners } from "./scoped-listeners.ts";
+import {
+  ScopedListeners,
+  getTouchCenter,
+  getTouchDistance,
+} from "./utils.ts";
 
 const container = document.getElementById("canvas-container")!;
 const world = document.getElementById("canvas-world")!;
@@ -33,19 +37,6 @@ const state: GestureState = {
 
 const gestureListeners = new ScopedListeners();
 
-function getDistance(touch1: Touch, touch2: Touch): number {
-  const dx = touch2.clientX - touch1.clientX;
-  const dy = touch2.clientY - touch1.clientY;
-  return Math.sqrt(dx * dx + dy * dy);
-}
-
-function getCenter(touch1: Touch, touch2: Touch): { x: number; y: number } {
-  return {
-    x: (touch1.clientX + touch2.clientX) / 2,
-    y: (touch1.clientY + touch2.clientY) / 2,
-  };
-}
-
 function applyTransform() {
   world.style.transformOrigin = "0 0";
   world.style.transform = `translate(${state.offsetX}px, ${state.offsetY}px) scale(${state.scale})`;
@@ -79,9 +70,9 @@ export function initMobileGestures(
       // Start pinch
       e.preventDefault();
       state.isPinching = true;
-      state.pinchStartDistance = getDistance(e.touches[0]!, e.touches[1]!);
+      state.pinchStartDistance = getTouchDistance(e.touches[0]!, e.touches[1]!);
       state.pinchStartScale = state.scale;
-      const center = getCenter(e.touches[0]!, e.touches[1]!);
+      const center = getTouchCenter(e.touches[0]!, e.touches[1]!);
       state.pinchCenterX = center.x;
       state.pinchCenterY = center.y;
     } else if (e.touches.length === 1) {
@@ -97,7 +88,7 @@ export function initMobileGestures(
   gestureListeners.listen<TouchEvent>(container, "touchmove", (e) => {
     if (state.isPinching && e.touches.length === 2) {
       e.preventDefault();
-      const currentDistance = getDistance(e.touches[0]!, e.touches[1]!);
+      const currentDistance = getTouchDistance(e.touches[0]!, e.touches[1]!);
       const scaleFactor = currentDistance / state.pinchStartDistance;
       const newScale = clampScale(state.pinchStartScale * scaleFactor);
 

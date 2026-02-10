@@ -1,12 +1,15 @@
 # Unit Tests
 
-This directory contains unit tests for isolated functions and utilities that don't require DOM or browser APIs.
+This directory contains unit tests for EchoChamber utility functions and business logic that don't require DOM or browser APIs.
 
 ## Running Tests
 
 ```bash
 # Run all unit tests
 bun test:unit
+
+# Run all tests
+bun test
 
 # Run specific test file
 bun test tests/unit/soundboard-filters.test.ts
@@ -192,3 +195,11 @@ Future coverage targets:
 - [ ] ID generation and validation
 - [ ] Data migrations and schema validation
 - [ ] Effect-based utilities (if testable without runtime)
+
+## Notes
+
+- Unit tests should be fast (<1ms per test)
+- Avoid dependencies on external state
+- Mock browser APIs when necessary
+- Test both success and failure paths
+- Use precise assertions (`toBe`, `toEqual`, `toBeCloseTo` for floats)

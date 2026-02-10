@@ -1,22 +1,46 @@
 import { addItemToCanvas } from "./canvas.ts";
-import { makeDraggable } from "./drag.ts";
-import { createSoundboard } from "./soundboard.ts";
+import { makeDraggable } from "./actions/drag.ts";
+import { createSoundboard } from "./soundboard/index.ts";
 import { createTextbox } from "./textbox.ts";
 import { persistence } from "../sync/persistence.ts";
 import { loadAudio, saveAudio } from "../sync/audio-storage.ts";
 import { uploadAudio } from "../sync/audio-sync.ts";
 
-export interface CanvasItem {
+// Base interface shared by all canvas items
+interface BaseCanvasItem {
   id: string;
   type: "soundboard" | "textbox";
   x: number;
   y: number;
   element: HTMLElement;
   cleanup?: () => void;
-  loadAudioBuffer?: (buffer: AudioBuffer | null) => void; // For soundboard restoration
-  play?: (fromRemote?: boolean) => void;
-  hotkey?: string;
-  name?: string;
+  cleanupDrag?: () => void; // Added by makeDraggable
+}
+
+// Soundboard-specific item
+export interface SoundboardItem extends BaseCanvasItem {
+  type: "soundboard";
+  loadAudioBuffer: (buffer: AudioBuffer | null) => void;
+  play: (fromRemote?: boolean) => void;
+  hotkey: string;
+  name: string;
+}
+
+// Textbox-specific item
+export interface TextboxItem extends BaseCanvasItem {
+  type: "textbox";
+}
+
+// Discriminated union of all canvas item types
+export type CanvasItem = SoundboardItem | TextboxItem;
+
+// Type guards
+export function isSoundboardItem(item: CanvasItem): item is SoundboardItem {
+  return item.type === "soundboard";
+}
+
+export function isTextboxItem(item: CanvasItem): item is TextboxItem {
+  return item.type === "textbox";
 }
 
 export const itemRegistry = new Map<string, CanvasItem>();
@@ -68,29 +92,36 @@ export function createItem(
   // Persist item creation (only for new items, not restored ones)
   if (usePersistenceId && !existingId) {
     const rect = item.element.getBoundingClientRect();
-    persistence.addItem(item.id, {
-      type: item.type,
-      x: item.x,
-      y: item.y,
-      width: rect.width,
-      height: rect.height,
-      ...(type === "soundboard"
-        ? {
-            name: (item as any).name || "",
-            hotkey: (item as any).hotkey || "",
-            filters: {
-              speedRate: 1,
-              reverbIntensity: 0,
-              reversed: 0,
-              playConcurrently: 0,
-              loopEnabled: 0,
-              loopDelaySeconds: 0,
-              repeatCount: 1,
-              repeatDelaySeconds: 0,
-            },
-          }
-        : { text: "Click to edit" }),
-    } as any);
+    if (type === "soundboard" && isSoundboardItem(item)) {
+      persistence.addItem(item.id, {
+        type: "soundboard",
+        x: item.x,
+        y: item.y,
+        width: rect.width,
+        height: rect.height,
+        name: item.name || "",
+        hotkey: item.hotkey || "",
+        filters: {
+          speedRate: 1,
+          reverbIntensity: 0,
+          reversed: 0,
+          playConcurrently: 0,
+          loopEnabled: 0,
+          loopDelaySeconds: 0,
+          repeatCount: 1,
+          repeatDelaySeconds: 0,
+        },
+      });
+    } else {
+      persistence.addItem(item.id, {
+        type: "textbox",
+        x: item.x,
+        y: item.y,
+        width: rect.width,
+        height: rect.height,
+        text: "Click to edit",
+      });
+    }
     console.log(`[Items] Item ${item.id} persisted to storage`);
   }
 
@@ -103,7 +134,7 @@ export function removeItem(id: string) {
 
   // Cleanup subscriptions
   if (item.cleanup) item.cleanup();
-  if ((item as any).cleanupDrag) (item as any).cleanupDrag();
+  if (item.cleanupDrag) item.cleanupDrag();
 
   item.element.remove();
   itemRegistry.delete(id);
@@ -121,7 +152,11 @@ export async function duplicateItem(id: string): Promise<CanvasItem | null> {
   const sourceData = persistence.getDoc().items?.[id];
   if (!sourceData) return null;
 
-  const copy = createItem(sourceItem.type, sourceItem.x + 24, sourceItem.y + 24);
+  const copy = createItem(
+    sourceItem.type,
+    sourceItem.x + 24,
+    sourceItem.y + 24,
+  );
 
   if (sourceData.type === "soundboard" && copy.type === "soundboard") {
     persistence.updateSoundboardName(copy.id, `${sourceData.name} Copy`);

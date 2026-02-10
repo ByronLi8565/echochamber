@@ -1,6 +1,6 @@
 import { Effect, Fiber, Queue, Ref, pipe } from "effect";
 import { WebSocket as ReconnectingWebSocket } from "partysocket";
-import { runFork, runSync } from "../util/effect-runtime.ts";
+import { runFork, runSync } from "../util/utils.ts";
 
 const RECONNECT_BASE_MS = 2000;
 const RECONNECT_MAX_MS = 30000;

@@ -1,18 +1,7 @@
 [test]
-# Test configuration for Bun test runner
+parallel = true
+timeout = 5000
+root = "./tests/unit"
 
-# Run tests in parallel
-# parallel = true
-
-# Timeout for tests (milliseconds)
-# timeout = 5000
-
-# Code coverage
-# coverage = true
-
-# Preload modules before running tests
-# preload = ["./test-setup.ts"]
-
-# Only run unit tests by default (exclude Playwright E2E tests)
-# Playwright tests are in tests/*.test.ts and use @playwright/test
-# Unit tests are in tests/unit/*.test.ts and use bun:test
+# Only run Bun unit tests by default.
+# Playwright specs live under tests/playwright and should be run with Playwright.

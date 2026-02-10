@@ -11,7 +11,9 @@ import { createItem, itemRegistry } from "../core/items.ts";
 export function initDeployModal(currentRoomCode: string | null): void {
   const btnDeploy = document.getElementById("btn-deploy")!;
   const modal = document.getElementById("deploy-modal")!;
-  const modalHeader = modal.querySelector(".modal-header") as HTMLElement | null;
+  const modalHeader = modal.querySelector(
+    ".modal-header",
+  ) as HTMLElement | null;
   const modalUrl = document.getElementById(
     "deploy-modal-url",
   ) as HTMLTextAreaElement;
@@ -140,7 +142,7 @@ export function initDeployModal(currentRoomCode: string | null): void {
 
     const wrapperEl = document.getElementById("connection-wrapper");
     if (wrapperEl) wrapperEl.style.display = "flex";
-  }
+  };
 
   updateModalMode();
 

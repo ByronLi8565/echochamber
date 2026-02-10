@@ -21,7 +21,6 @@ function createPermissionAlert(): HTMLElement {
   alert.className = "permission-alert";
   alert.innerHTML = `
     <div class="permission-alert-content">
-      <div class="permission-alert-icon">⚠️</div>
       <div class="permission-alert-text">
         <div class="permission-alert-title">Permission Required</div>
         <div class="permission-alert-message"></div>
@@ -79,7 +78,10 @@ async function checkMicrophonePermission(): Promise<PermissionStateValue> {
     return "granted";
   } catch (err) {
     if (err instanceof DOMException) {
-      if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+      if (
+        err.name === "NotAllowedError" ||
+        err.name === "PermissionDeniedError"
+      ) {
         return "denied";
       }
       if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
@@ -144,12 +146,13 @@ async function performPermissionCheck() {
   currentState.audioPlayback = audioPermission;
 
   // Determine what to show
-  const needsMicrophone = micPermission === "denied" || micPermission === "prompt";
+  const needsMicrophone =
+    micPermission === "denied" || micPermission === "prompt";
   const needsAudio = !audioPermission;
 
   if (needsMicrophone && needsAudio) {
     showAlert(
-      "Microphone and audio playback permissions are needed to record and play sounds.",
+      "We need microphone and audio playback permissions to record and play sounds!",
       async () => {
         await requestMicrophonePermission();
         await requestAudioPlaybackPermission();
@@ -157,7 +160,7 @@ async function performPermissionCheck() {
     );
   } else if (needsMicrophone) {
     showAlert(
-      "Microphone permission is needed to record sounds. Please grant access to continue.",
+      "We need permission to use your microphone in order to record sounds! Please grant access to continue.",
       async () => {
         const granted = await requestMicrophonePermission();
         if (granted) {
@@ -167,7 +170,7 @@ async function performPermissionCheck() {
     );
   } else if (needsAudio) {
     showAlert(
-      "Audio playback permission is needed to play sounds. Click to enable audio.",
+      "We need permission to play sounds! Please grant access to continue.",
       async () => {
         const granted = await requestAudioPlaybackPermission();
         if (granted) {
@@ -185,14 +188,21 @@ export function initPermissionAlerts() {
   performPermissionCheck();
 
   // Set up periodic checks
-  checkInterval = setInterval(performPermissionCheck, PERMISSION_CHECK_INTERVAL) as unknown as number;
+  checkInterval = setInterval(
+    performPermissionCheck,
+    PERMISSION_CHECK_INTERVAL,
+  ) as unknown as number;
 
   // Also check on user interaction (for audio context)
   const interactionEvents = ["click", "touchstart", "keydown"];
   interactionEvents.forEach((event) => {
-    document.addEventListener(event, () => {
-      checkAudioPlaybackPermission();
-    }, { once: true });
+    document.addEventListener(
+      event,
+      () => {
+        checkAudioPlaybackPermission();
+      },
+      { once: true },
+    );
   });
 }
 

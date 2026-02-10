@@ -1,380 +1,370 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
   getConnectedSoundboardIds,
   getSequentialSoundboardSteps,
-  type LinkPair,
-} from "../../src/util/soundboard-graph.ts";
+  type LinkPair
+} from "../../src/util/soundboard-graph";
 
 describe("getConnectedSoundboardIds", () => {
-  describe("with no items", () => {
-    test("returns empty array for non-existent origin", () => {
+  describe("basic connectivity", () => {
+    test("returns only origin for isolated soundboard", () => {
+      const items = { s1: { type: "soundboard" } };
+      const links: LinkPair[] = [];
+      const result = getConnectedSoundboardIds(items, links, "s1");
+      expect(result).toEqual(["s1"]);
+    });
+
+    test("returns empty array for non-soundboard item", () => {
+      const items = { t1: { type: "textbox" } };
+      const links: LinkPair[] = [];
+      const result = getConnectedSoundboardIds(items, links, "t1");
+      expect(result).toEqual([]);
+    });
+
+    test("returns empty array for non-existent item", () => {
       const items = {};
       const links: LinkPair[] = [];
-      const result = getConnectedSoundboardIds(items, links, "item1");
-      expect(result).toEqual([]);
-    });
-  });
-
-  describe("with non-soundboard items", () => {
-    test("returns empty array if origin is not a soundboard", () => {
-      const items = { item1: { type: "textbox" } };
-      const links: LinkPair[] = [];
-      const result = getConnectedSoundboardIds(items, links, "item1");
+      const result = getConnectedSoundboardIds(items, links, "nonexistent");
       expect(result).toEqual([]);
     });
 
-    test("ignores links to non-soundboard items", () => {
+    test("returns connected pair", () => {
       const items = {
-        sb1: { type: "soundboard" },
-        tb1: { type: "textbox" },
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" }
       };
-      const links: LinkPair[] = [{ itemA: "sb1", itemB: "tb1" }];
-      const result = getConnectedSoundboardIds(items, links, "sb1");
-      expect(result).toEqual(["sb1"]);
+      const links: LinkPair[] = [{ itemA: "s1", itemB: "s2" }];
+      const result = getConnectedSoundboardIds(items, links, "s1");
+      expect(result.sort()).toEqual(["s1", "s2"]);
+    });
+
+    test("returns all items in linear chain", () => {
+      const items = {
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" }
+      };
+      const links: LinkPair[] = [
+        { itemA: "s1", itemB: "s2" },
+        { itemA: "s2", itemB: "s3" }
+      ];
+      const result = getConnectedSoundboardIds(items, links, "s1");
+      expect(result.sort()).toEqual(["s1", "s2", "s3"]);
+    });
+
+    test("returns all items in branching graph", () => {
+      const items = {
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" },
+        s4: { type: "soundboard" }
+      };
+      const links: LinkPair[] = [
+        { itemA: "s1", itemB: "s2" },
+        { itemA: "s1", itemB: "s3" },
+        { itemA: "s2", itemB: "s4" }
+      ];
+      const result = getConnectedSoundboardIds(items, links, "s1");
+      expect(result.sort()).toEqual(["s1", "s2", "s3", "s4"]);
     });
   });
 
-  describe("with isolated soundboard", () => {
-    test("returns only the origin soundboard", () => {
-      const items = { sb1: { type: "soundboard" } };
-      const links: LinkPair[] = [];
-      const result = getConnectedSoundboardIds(items, links, "sb1");
-      expect(result).toEqual(["sb1"]);
-    });
-  });
-
-  describe("with simple chain", () => {
-    test("returns all connected soundboards in a 2-node chain", () => {
+  describe("cycles and complex graphs", () => {
+    test("handles simple cycle", () => {
       const items = {
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
-      };
-      const links: LinkPair[] = [{ itemA: "sb1", itemB: "sb2" }];
-      const result = getConnectedSoundboardIds(items, links, "sb1");
-      expect(result.sort()).toEqual(["sb1", "sb2"]);
-    });
-
-    test("returns all connected soundboards in a 3-node chain", () => {
-      const items = {
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
-        sb3: { type: "soundboard" },
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" }
       };
       const links: LinkPair[] = [
-        { itemA: "sb1", itemB: "sb2" },
-        { itemA: "sb2", itemB: "sb3" },
+        { itemA: "s1", itemB: "s2" },
+        { itemA: "s2", itemB: "s3" },
+        { itemA: "s3", itemB: "s1" }
       ];
-      const result = getConnectedSoundboardIds(items, links, "sb1");
-      expect(result.sort()).toEqual(["sb1", "sb2", "sb3"]);
+      const result = getConnectedSoundboardIds(items, links, "s1");
+      expect(result.sort()).toEqual(["s1", "s2", "s3"]);
     });
 
-    test("works from any node in the chain", () => {
+    test("handles self-loop", () => {
       const items = {
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
-        sb3: { type: "soundboard" },
+        s1: { type: "soundboard" }
       };
-      const links: LinkPair[] = [
-        { itemA: "sb1", itemB: "sb2" },
-        { itemA: "sb2", itemB: "sb3" },
-      ];
-      const result = getConnectedSoundboardIds(items, links, "sb2");
-      expect(result.sort()).toEqual(["sb1", "sb2", "sb3"]);
-    });
-  });
-
-  describe("with branching graphs", () => {
-    test("returns all connected soundboards in a star topology", () => {
-      const items = {
-        center: { type: "soundboard" },
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
-        sb3: { type: "soundboard" },
-      };
-      const links: LinkPair[] = [
-        { itemA: "center", itemB: "sb1" },
-        { itemA: "center", itemB: "sb2" },
-        { itemA: "center", itemB: "sb3" },
-      ];
-      const result = getConnectedSoundboardIds(items, links, "center");
-      expect(result.sort()).toEqual(["center", "sb1", "sb2", "sb3"]);
-    });
-
-    test("handles complex branching", () => {
-      const items = {
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
-        sb3: { type: "soundboard" },
-        sb4: { type: "soundboard" },
-        sb5: { type: "soundboard" },
-      };
-      const links: LinkPair[] = [
-        { itemA: "sb1", itemB: "sb2" },
-        { itemA: "sb1", itemB: "sb3" },
-        { itemA: "sb2", itemB: "sb4" },
-        { itemA: "sb3", itemB: "sb5" },
-      ];
-      const result = getConnectedSoundboardIds(items, links, "sb1");
-      expect(result.sort()).toEqual(["sb1", "sb2", "sb3", "sb4", "sb5"]);
-    });
-  });
-
-  describe("with cycles", () => {
-    test("handles simple cycle without infinite loop", () => {
-      const items = {
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
-        sb3: { type: "soundboard" },
-      };
-      const links: LinkPair[] = [
-        { itemA: "sb1", itemB: "sb2" },
-        { itemA: "sb2", itemB: "sb3" },
-        { itemA: "sb3", itemB: "sb1" },
-      ];
-      const result = getConnectedSoundboardIds(items, links, "sb1");
-      expect(result.sort()).toEqual(["sb1", "sb2", "sb3"]);
+      const links: LinkPair[] = [{ itemA: "s1", itemB: "s1" }];
+      const result = getConnectedSoundboardIds(items, links, "s1");
+      expect(result).toEqual(["s1"]);
     });
 
     test("handles complex graph with multiple cycles", () => {
       const items = {
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
-        sb3: { type: "soundboard" },
-        sb4: { type: "soundboard" },
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" },
+        s4: { type: "soundboard" },
+        s5: { type: "soundboard" }
       };
       const links: LinkPair[] = [
-        { itemA: "sb1", itemB: "sb2" },
-        { itemA: "sb2", itemB: "sb3" },
-        { itemA: "sb3", itemB: "sb4" },
-        { itemA: "sb4", itemB: "sb1" },
-        { itemA: "sb1", itemB: "sb3" },
+        { itemA: "s1", itemB: "s2" },
+        { itemA: "s2", itemB: "s3" },
+        { itemA: "s3", itemB: "s1" },
+        { itemA: "s3", itemB: "s4" },
+        { itemA: "s4", itemB: "s5" },
+        { itemA: "s5", itemB: "s3" }
       ];
-      const result = getConnectedSoundboardIds(items, links, "sb1");
-      expect(result.sort()).toEqual(["sb1", "sb2", "sb3", "sb4"]);
+      const result = getConnectedSoundboardIds(items, links, "s1");
+      expect(result.sort()).toEqual(["s1", "s2", "s3", "s4", "s5"]);
     });
   });
 
-  describe("with disconnected components", () => {
-    test("returns only the connected component", () => {
+  describe("disconnected components", () => {
+    test("only returns items in same component", () => {
       const items = {
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
-        sb3: { type: "soundboard" },
-        sb4: { type: "soundboard" },
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" },
+        s4: { type: "soundboard" }
       };
       const links: LinkPair[] = [
-        { itemA: "sb1", itemB: "sb2" },
-        { itemA: "sb3", itemB: "sb4" },
+        { itemA: "s1", itemB: "s2" },
+        { itemA: "s3", itemB: "s4" }
       ];
-      const result = getConnectedSoundboardIds(items, links, "sb1");
-      expect(result.sort()).toEqual(["sb1", "sb2"]);
+      const result = getConnectedSoundboardIds(items, links, "s1");
+      expect(result.sort()).toEqual(["s1", "s2"]);
+    });
+
+    test("returns different components from different origins", () => {
+      const items = {
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" }
+      };
+      const links: LinkPair[] = [{ itemA: "s1", itemB: "s2" }];
+
+      const result1 = getConnectedSoundboardIds(items, links, "s1");
+      const result3 = getConnectedSoundboardIds(items, links, "s3");
+
+      expect(result1.sort()).toEqual(["s1", "s2"]);
+      expect(result3).toEqual(["s3"]);
     });
   });
 
-  describe("with bidirectional links", () => {
-    test("treats links as undirected (both directions work)", () => {
+  describe("mixed item types", () => {
+    test("ignores links involving non-soundboard items", () => {
       const items = {
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        t1: { type: "textbox" }
       };
-      const links: LinkPair[] = [{ itemA: "sb1", itemB: "sb2" }];
-      const result1 = getConnectedSoundboardIds(items, links, "sb1");
-      const result2 = getConnectedSoundboardIds(items, links, "sb2");
-      expect(result1.sort()).toEqual(["sb1", "sb2"]);
-      expect(result2.sort()).toEqual(["sb1", "sb2"]);
+      const links: LinkPair[] = [
+        { itemA: "s1", itemB: "t1" },
+        { itemA: "t1", itemB: "s2" }
+      ];
+      const result = getConnectedSoundboardIds(items, links, "s1");
+      expect(result).toEqual(["s1"]);
+    });
+
+    test("traverses soundboard links while ignoring textbox links", () => {
+      const items = {
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" },
+        t1: { type: "textbox" }
+      };
+      const links: LinkPair[] = [
+        { itemA: "s1", itemB: "s2" },
+        { itemA: "s2", itemB: "t1" },
+        { itemA: "s2", itemB: "s3" }
+      ];
+      const result = getConnectedSoundboardIds(items, links, "s1");
+      expect(result.sort()).toEqual(["s1", "s2", "s3"]);
     });
   });
 });
 
 describe("getSequentialSoundboardSteps", () => {
-  describe("with non-soundboard origin", () => {
-    test("returns single step with null parent", () => {
-      const items = { tb1: { type: "textbox" } };
+  describe("basic sequencing", () => {
+    test("returns single step for isolated soundboard", () => {
+      const items = { s1: { type: "soundboard" } };
       const links: LinkPair[] = [];
-      const result = getSequentialSoundboardSteps(items, links, "tb1");
-      expect(result).toEqual([{ itemId: "tb1", parentId: null }]);
+      const result = getSequentialSoundboardSteps(items, links, "s1");
+      expect(result).toEqual([{ itemId: "s1", parentId: null }]);
     });
 
-    test("returns single step for non-existent item", () => {
-      const items = {};
+    test("returns single step for non-soundboard item", () => {
+      const items = { t1: { type: "textbox" } };
       const links: LinkPair[] = [];
-      const result = getSequentialSoundboardSteps(items, links, "missing");
-      expect(result).toEqual([{ itemId: "missing", parentId: null }]);
+      const result = getSequentialSoundboardSteps(items, links, "t1");
+      expect(result).toEqual([{ itemId: "t1", parentId: null }]);
     });
-  });
 
-  describe("with isolated soundboard", () => {
-    test("returns single step with null parent", () => {
-      const items = { sb1: { type: "soundboard" } };
-      const links: LinkPair[] = [];
-      const result = getSequentialSoundboardSteps(items, links, "sb1");
-      expect(result).toEqual([{ itemId: "sb1", parentId: null }]);
-    });
-  });
-
-  describe("with linear chain", () => {
-    test("returns steps in BFS order for 2-node chain", () => {
+    test("returns ordered steps for connected pair", () => {
       const items = {
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" }
       };
-      const links: LinkPair[] = [{ itemA: "sb1", itemB: "sb2" }];
-      const result = getSequentialSoundboardSteps(items, links, "sb1");
+      const links: LinkPair[] = [{ itemA: "s1", itemB: "s2" }];
+      const result = getSequentialSoundboardSteps(items, links, "s1");
       expect(result).toEqual([
-        { itemId: "sb1", parentId: null },
-        { itemId: "sb2", parentId: "sb1" },
+        { itemId: "s1", parentId: null },
+        { itemId: "s2", parentId: "s1" }
       ]);
     });
 
-    test("returns steps in BFS order for 3-node chain", () => {
+    test("returns ordered steps for linear chain", () => {
       const items = {
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
-        sb3: { type: "soundboard" },
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" }
       };
       const links: LinkPair[] = [
-        { itemA: "sb1", itemB: "sb2" },
-        { itemA: "sb2", itemB: "sb3" },
+        { itemA: "s1", itemB: "s2" },
+        { itemA: "s2", itemB: "s3" }
       ];
-      const result = getSequentialSoundboardSteps(items, links, "sb1");
+      const result = getSequentialSoundboardSteps(items, links, "s1");
       expect(result).toEqual([
-        { itemId: "sb1", parentId: null },
-        { itemId: "sb2", parentId: "sb1" },
-        { itemId: "sb3", parentId: "sb2" },
+        { itemId: "s1", parentId: null },
+        { itemId: "s2", parentId: "s1" },
+        { itemId: "s3", parentId: "s2" }
       ]);
-    });
-  });
-
-  describe("with branching graphs", () => {
-    test("returns steps in BFS order with sorted neighbors", () => {
-      const items = {
-        center: { type: "soundboard" },
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
-        sb3: { type: "soundboard" },
-      };
-      const links: LinkPair[] = [
-        { itemA: "center", itemB: "sb3" },
-        { itemA: "center", itemB: "sb1" },
-        { itemA: "center", itemB: "sb2" },
-      ];
-      const result = getSequentialSoundboardSteps(items, links, "center");
-      expect(result).toEqual([
-        { itemId: "center", parentId: null },
-        { itemId: "sb1", parentId: "center" },
-        { itemId: "sb2", parentId: "center" },
-        { itemId: "sb3", parentId: "center" },
-      ]);
-    });
-
-    test("handles complex tree structure", () => {
-      const items = {
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
-        sb3: { type: "soundboard" },
-        sb4: { type: "soundboard" },
-        sb5: { type: "soundboard" },
-      };
-      const links: LinkPair[] = [
-        { itemA: "sb1", itemB: "sb2" },
-        { itemA: "sb1", itemB: "sb3" },
-        { itemA: "sb2", itemB: "sb4" },
-        { itemA: "sb2", itemB: "sb5" },
-      ];
-      const result = getSequentialSoundboardSteps(items, links, "sb1");
-      expect(result).toEqual([
-        { itemId: "sb1", parentId: null },
-        { itemId: "sb2", parentId: "sb1" },
-        { itemId: "sb3", parentId: "sb1" },
-        { itemId: "sb4", parentId: "sb2" },
-        { itemId: "sb5", parentId: "sb2" },
-      ]);
-    });
-  });
-
-  describe("with cycles", () => {
-    test("handles cycle without duplicates", () => {
-      const items = {
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
-        sb3: { type: "soundboard" },
-      };
-      const links: LinkPair[] = [
-        { itemA: "sb1", itemB: "sb2" },
-        { itemA: "sb2", itemB: "sb3" },
-        { itemA: "sb3", itemB: "sb1" },
-      ];
-      const result = getSequentialSoundboardSteps(items, links, "sb1");
-      expect(result.length).toBe(3);
-      expect(result[0]).toEqual({ itemId: "sb1", parentId: null });
-      // sb2 and sb3 are visited but only once each
-      const itemIds = result.map((step) => step.itemId);
-      expect(new Set(itemIds).size).toBe(3);
-    });
-  });
-
-  describe("with disconnected components", () => {
-    test("returns only the connected component", () => {
-      const items = {
-        sb1: { type: "soundboard" },
-        sb2: { type: "soundboard" },
-        sb3: { type: "soundboard" },
-        sb4: { type: "soundboard" },
-      };
-      const links: LinkPair[] = [
-        { itemA: "sb1", itemB: "sb2" },
-        { itemA: "sb3", itemB: "sb4" },
-      ];
-      const result = getSequentialSoundboardSteps(items, links, "sb1");
-      expect(result.length).toBe(2);
-      const itemIds = result.map((step) => step.itemId);
-      expect(itemIds.sort()).toEqual(["sb1", "sb2"]);
     });
   });
 
   describe("parent tracking", () => {
-    test("correctly tracks parent for each node", () => {
+    test("tracks parent IDs in branching structure", () => {
       const items = {
-        root: { type: "soundboard" },
-        child1: { type: "soundboard" },
-        child2: { type: "soundboard" },
-        grandchild: { type: "soundboard" },
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" }
       };
       const links: LinkPair[] = [
-        { itemA: "root", itemB: "child1" },
-        { itemA: "root", itemB: "child2" },
-        { itemA: "child1", itemB: "grandchild" },
+        { itemA: "s1", itemB: "s2" },
+        { itemA: "s1", itemB: "s3" }
       ];
-      const result = getSequentialSoundboardSteps(items, links, "root");
-      expect(result).toEqual([
-        { itemId: "root", parentId: null },
-        { itemId: "child1", parentId: "root" },
-        { itemId: "child2", parentId: "root" },
-        { itemId: "grandchild", parentId: "child1" },
-      ]);
+      const result = getSequentialSoundboardSteps(items, links, "s1");
+
+      expect(result[0]).toEqual({ itemId: "s1", parentId: null });
+      expect(result.slice(1).every(step => step.parentId === "s1")).toBe(true);
+      expect(result.length).toBe(3);
+    });
+
+    test("tracks multi-level parent relationships", () => {
+      const items = {
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" },
+        s4: { type: "soundboard" }
+      };
+      const links: LinkPair[] = [
+        { itemA: "s1", itemB: "s2" },
+        { itemA: "s2", itemB: "s3" },
+        { itemA: "s2", itemB: "s4" }
+      ];
+      const result = getSequentialSoundboardSteps(items, links, "s1");
+
+      expect(result[0]).toEqual({ itemId: "s1", parentId: null });
+      expect(result.find(s => s.itemId === "s2")?.parentId).toBe("s1");
+      const s3 = result.find(s => s.itemId === "s3");
+      const s4 = result.find(s => s.itemId === "s4");
+      expect(s3?.parentId).toBe("s2");
+      expect(s4?.parentId).toBe("s2");
     });
   });
 
-  describe("neighbor sorting", () => {
-    test("neighbors are sorted alphabetically", () => {
+  describe("ordering and consistency", () => {
+    test("produces consistent ordering with sorted neighbors", () => {
       const items = {
-        center: { type: "soundboard" },
-        zebra: { type: "soundboard" },
-        alpha: { type: "soundboard" },
-        beta: { type: "soundboard" },
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" },
+        s4: { type: "soundboard" }
       };
       const links: LinkPair[] = [
-        { itemA: "center", itemB: "zebra" },
-        { itemA: "center", itemB: "alpha" },
-        { itemA: "center", itemB: "beta" },
+        { itemA: "s1", itemB: "s4" },
+        { itemA: "s1", itemB: "s2" },
+        { itemA: "s1", itemB: "s3" }
       ];
-      const result = getSequentialSoundboardSteps(items, links, "center");
-      expect(result.map((s) => s.itemId)).toEqual([
-        "center",
-        "alpha",
-        "beta",
-        "zebra",
-      ]);
+      const result = getSequentialSoundboardSteps(items, links, "s1");
+
+      const ids = result.slice(1).map(s => s.itemId);
+      expect(ids).toEqual(["s2", "s3", "s4"]);
+    });
+
+    test("maintains BFS level ordering", () => {
+      const items = {
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" },
+        s4: { type: "soundboard" },
+        s5: { type: "soundboard" }
+      };
+      const links: LinkPair[] = [
+        { itemA: "s1", itemB: "s2" },
+        { itemA: "s1", itemB: "s3" },
+        { itemA: "s2", itemB: "s4" },
+        { itemA: "s3", itemB: "s5" }
+      ];
+      const result = getSequentialSoundboardSteps(items, links, "s1");
+
+      expect(result[0].itemId).toBe("s1");
+      const level1 = result.slice(1, 3).map(s => s.itemId).sort();
+      const level2 = result.slice(3, 5).map(s => s.itemId).sort();
+      expect(level1).toEqual(["s2", "s3"]);
+      expect(level2).toEqual(["s4", "s5"]);
+    });
+  });
+
+  describe("cycles and revisiting", () => {
+    test("handles cycle without revisiting nodes", () => {
+      const items = {
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" }
+      };
+      const links: LinkPair[] = [
+        { itemA: "s1", itemB: "s2" },
+        { itemA: "s2", itemB: "s3" },
+        { itemA: "s3", itemB: "s1" }
+      ];
+      const result = getSequentialSoundboardSteps(items, links, "s1");
+
+      expect(result.length).toBe(3);
+      const ids = result.map(s => s.itemId);
+      expect(new Set(ids).size).toBe(3);
+    });
+
+    test("handles complex cycles with branches", () => {
+      const items = {
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        s3: { type: "soundboard" },
+        s4: { type: "soundboard" }
+      };
+      const links: LinkPair[] = [
+        { itemA: "s1", itemB: "s2" },
+        { itemA: "s2", itemB: "s3" },
+        { itemA: "s3", itemB: "s1" },
+        { itemA: "s2", itemB: "s4" }
+      ];
+      const result = getSequentialSoundboardSteps(items, links, "s1");
+
+      expect(result.length).toBe(4);
+      const ids = result.map(s => s.itemId);
+      expect(new Set(ids).size).toBe(4);
+    });
+  });
+
+  describe("mixed item types", () => {
+    test("ignores textbox items in links", () => {
+      const items = {
+        s1: { type: "soundboard" },
+        s2: { type: "soundboard" },
+        t1: { type: "textbox" }
+      };
+      const links: LinkPair[] = [
+        { itemA: "s1", itemB: "t1" },
+        { itemA: "t1", itemB: "s2" }
+      ];
+      const result = getSequentialSoundboardSteps(items, links, "s1");
+      expect(result).toEqual([{ itemId: "s1", parentId: null }]);
     });
   });
 });

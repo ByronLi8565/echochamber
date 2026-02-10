@@ -3,7 +3,9 @@
  */
 
 import { Effect, pipe } from "effect";
-import { runPromise, StorageError } from "../util/effect-runtime.ts";
+import { runPromise } from "../util/utils.ts";
+import { handleIndexedDBError, StorageError } from "../util/errors.ts";
+import { debug } from "../util/debug";
 
 const DB_NAME = "echochamber-audio";
 const DB_VERSION = 1;
@@ -36,17 +38,60 @@ function openDatabase(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
 
   dbPromise = new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    try {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
+      request.onerror = () => {
+        const error = request.error || new Error("Failed to open IndexedDB");
+        debug.persistence.error("IndexedDB open failed:", error);
+        handleIndexedDBError("open", error);
+        reject(
+          new StorageError("Failed to open audio database", {
+            cause: error,
+            userMessage:
+              "Could not access audio storage. Please check browser settings.",
+          }),
+        );
+      };
 
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME);
-      }
-    };
+      request.onsuccess = () => {
+        debug.persistence.log("IndexedDB opened successfully");
+        resolve(request.result);
+      };
+
+      request.onupgradeneeded = (event) => {
+        try {
+          const db = (event.target as IDBOpenDBRequest).result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME);
+            debug.persistence.log("Created audio buffer object store");
+          }
+        } catch (error) {
+          debug.persistence.error("IndexedDB upgrade failed:", error);
+          reject(
+            new StorageError("Failed to upgrade audio database", {
+              cause: error,
+              userMessage: "Database upgrade failed. Please refresh the page.",
+            }),
+          );
+        }
+      };
+
+      request.onblocked = () => {
+        debug.persistence.warn(
+          "IndexedDB open blocked - close other tabs using this app",
+        );
+      };
+    } catch (error) {
+      debug.persistence.error("IndexedDB initialization failed:", error);
+      reject(
+        new StorageError("Failed to initialize audio database", {
+          cause: error,
+          userMessage:
+            "Storage initialization failed. Please check browser settings.",
+        }),
+      );
+    }
   });
 
   return dbPromise;
@@ -130,40 +175,84 @@ export async function saveAudio(
   key: string,
   buffer: AudioBuffer,
 ): Promise<void> {
-  const serialized = serializeAudioBuffer(buffer);
-  await runPromise(
-    pipe(
-      runDbRequestEffect("readwrite", (store) => store.put(serialized, key)),
-      Effect.asVoid,
-    ),
-  );
+  try {
+    debug.persistence.log(`Saving audio: ${key}`);
+    const serialized = serializeAudioBuffer(buffer);
+    await runPromise(
+      pipe(
+        runDbRequestEffect("readwrite", (store) => store.put(serialized, key)),
+        Effect.asVoid,
+      ),
+    );
+    debug.persistence.log(`Audio saved successfully: ${key}`);
+  } catch (error) {
+    debug.persistence.error("Failed to save audio:", error);
+    handleIndexedDBError("save", error);
+    throw error;
+  }
 }
 
 export async function loadAudio(
   key: string,
   audioContext: AudioContext,
 ): Promise<AudioBuffer | null> {
-  const data = await runPromise(
-    runDbRequestEffect<StoredAudioBuffer | undefined>("readonly", (store) =>
-      store.get(key),
-    ),
-  );
-  if (!data) return null;
-  if (data.roomCode !== activeRoomCode) return null;
-  return deserializeAudioBuffer(data as SerializedAudioBuffer, audioContext);
+  try {
+    const data = await runPromise(
+      runDbRequestEffect<StoredAudioBuffer | undefined>("readonly", (store) =>
+        store.get(key),
+      ),
+    );
+    if (!data) {
+      debug.persistence.log(`Audio not found: ${key}`);
+      return null;
+    }
+    if (data.roomCode !== activeRoomCode) {
+      debug.persistence.log(`Audio ${key} skipped - room code mismatch`);
+      return null;
+    }
+    const buffer = deserializeAudioBuffer(
+      data as SerializedAudioBuffer,
+      audioContext,
+    );
+    debug.persistence.log(`Audio loaded successfully: ${key}`);
+    return buffer;
+  } catch (error) {
+    debug.persistence.error("Failed to load audio:", error);
+    // Don't show notification for load failures - they're often expected
+    return null;
+  }
 }
 
 export async function deleteAudio(key: string): Promise<void> {
-  await runPromise(
-    pipe(
-      runDbRequestEffect("readwrite", (store) => store.delete(key)),
-      Effect.asVoid,
-    ),
-  );
+  try {
+    debug.persistence.log(`Deleting audio: ${key}`);
+    await runPromise(
+      pipe(
+        runDbRequestEffect("readwrite", (store) => store.delete(key)),
+        Effect.asVoid,
+      ),
+    );
+    debug.persistence.log(`Audio deleted successfully: ${key}`);
+  } catch (error) {
+    debug.persistence.error("Failed to delete audio:", error);
+    // Don't throw - deletion failures are often non-critical
+    return;
+  }
 }
 
 export async function getAllAudioKeys(): Promise<string[]> {
-  return runPromise(
-    runDbRequestEffect<IDBValidKey[]>("readonly", (store) => store.getAllKeys()),
-  ).then((keys) => keys.map((key) => String(key)));
+  try {
+    const keys = await runPromise(
+      runDbRequestEffect<IDBValidKey[]>("readonly", (store) =>
+        store.getAllKeys(),
+      ),
+    );
+    const stringKeys = keys.map((key) => String(key));
+    debug.persistence.log(`Retrieved ${stringKeys.length} audio keys`);
+    return stringKeys;
+  } catch (error) {
+    debug.persistence.error("Failed to get all audio keys:", error);
+    // Return empty array on failure rather than throwing
+    return [];
+  }
 }

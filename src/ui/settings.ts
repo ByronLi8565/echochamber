@@ -1,5 +1,5 @@
 import { forceResync, setSyncAudioEnabled } from "../sync/sync.ts";
-import { ScopedListeners } from "../util/scoped-listeners.ts";
+import { ScopedListeners } from "../util/utils.ts";
 
 const SYNC_COLORS_KEY = "echochamber-sync-colors";
 const SYNC_AUDIO_KEY = "echochamber-sync-audio-enabled";

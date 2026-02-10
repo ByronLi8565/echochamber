@@ -11,13 +11,14 @@ import {
   removeItem,
   itemRegistry,
   setUsePersistenceId,
+  isSoundboardItem,
   type CanvasItem,
 } from "./items.ts";
 import {
   getReadableTextColor,
   hotkeyRegistry,
   updateSoundboardAdaptiveTextColor,
-} from "./soundboard.ts";
+} from "./soundboard/index.ts";
 import { persistence } from "../sync/persistence.ts";
 import { loadAudio, setAudioStorageRoom } from "../sync/audio-storage.ts";
 import { startSync } from "../sync/sync.ts";
@@ -31,21 +32,21 @@ import {
   initColorBucket,
   exitPaintMode,
   onPaintModeChange,
-} from "../ui/color-bucket.ts";
+} from "./actions/color-bucket.ts";
 import {
   initLinksTool,
   exitLinkMode,
   onLinkModeChange,
   invalidateLinksOverlay,
-} from "../ui/links.ts";
+} from "./actions/links.ts";
 import {
   initSettings,
   isSyncColorsEnabled,
   onSyncColorsChange,
 } from "../ui/settings.ts";
 import type { ThemeData } from "../sync/persistence.ts";
-import { ScopedListeners } from "../util/scoped-listeners.ts";
-import { initPermissionAlerts } from "../util/permission-alerts.ts";
+import { ScopedListeners } from "../util/utils.ts";
+import { initPermissionAlerts } from "../ui/permission-alerts.ts";
 
 const container = document.getElementById("canvas-container")!;
 const btnAddSound = document.getElementById("btn-add-sound")!;
@@ -305,7 +306,7 @@ async function initializeApp() {
     const item = createItem(itemData.type, itemData.x, itemData.y, itemId);
 
     // For soundboards, load audio buffer (transient state, not in Automerge)
-    if (itemData.type === "soundboard" && item.loadAudioBuffer) {
+    if (itemData.type === "soundboard" && isSoundboardItem(item)) {
       const audioKey = doc.audioFiles[itemId];
       let audioBuffer = null;
       if (audioKey) {
@@ -376,7 +377,7 @@ async function initializeApp() {
           const item = itemRegistry.get(itemId);
           if (item) {
             if (item.cleanup) item.cleanup();
-            if ((item as any).cleanupDrag) (item as any).cleanupDrag();
+            if (item.cleanupDrag) item.cleanupDrag();
             item.element.remove();
             itemRegistry.delete(itemId);
           }
@@ -394,7 +395,9 @@ async function initializeApp() {
         applyRemoteDoc: (newDoc) => persistence.applyRemoteDoc(newDoc),
         onRemoteAudioPlay: (itemId) => {
           const item = itemRegistry.get(itemId);
-          item?.play?.(true);
+          if (item && isSoundboardItem(item)) {
+            item.play(true);
+          }
         },
         onConnected: () => updateConnectionStatus(true),
         onDisconnected: () => updateConnectionStatus(false),
