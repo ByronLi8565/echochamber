@@ -8,7 +8,9 @@
     "build:client": "bun run build-client.ts",
     "dev": "bun run build:client && wrangler dev",
     "deploy": "bun run build:client && wrangler deploy",
-    "test": "playwright test",
+    "test": "bun test",
+    "test:unit": "bun test tests/unit",
+    "test:e2e": "playwright test",
     "test:ui": "playwright test --ui",
     "test:debug": "playwright test --debug"
   },
