@@ -12,10 +12,6 @@
 
 import { DEBUG_STORAGE_KEY } from "../config/constants";
 
-// =============================================================================
-// TYPES
-// =============================================================================
-
 type DebugCategory =
   | "app"
   | "sync"
@@ -38,22 +34,16 @@ interface DebugConfig {
   colors: Record<DebugCategory, string>;
 }
 
-// =============================================================================
-// CONFIGURATION
-// =============================================================================
-
-/** Color codes for each category */
 const CATEGORY_COLORS: Record<DebugCategory, string> = {
-  app: "#9b59b6", // Purple
-  sync: "#3498db", // Blue
-  persistence: "#2ecc71", // Green
-  audio: "#e74c3c", // Red
-  drag: "#f39c12", // Orange
-  canvas: "#1abc9c", // Teal
-  items: "#e91e63", // Pink
+  app: "#9b59b6",
+  sync: "#3498db",
+  persistence: "#2ecc71",
+  audio: "#e74c3c",
+  drag: "#f39c12",
+  canvas: "#1abc9c",
+  items: "#e91e63",
 };
 
-/** Check if running in development mode */
 const isDevelopment = (): boolean => {
   try {
     return (
@@ -67,14 +57,6 @@ const isDevelopment = (): boolean => {
   }
 };
 
-// =============================================================================
-// CONFIGURATION MANAGEMENT
-// =============================================================================
-
-/**
- * Parse debug categories from URL parameter
- * Example: ?debug=app,sync,persistence
- */
 function getUrlDebugCategories(): DebugCategory[] | null {
   if (typeof window === "undefined") return null;
 
@@ -99,9 +81,6 @@ function getUrlDebugCategories(): DebugCategory[] | null {
   return validCategories.length > 0 ? validCategories : null;
 }
 
-/**
- * Parse debug categories from localStorage
- */
 function getStorageDebugCategories(): DebugCategory[] | null {
   if (typeof window === "undefined") return null;
 
@@ -128,9 +107,6 @@ function getStorageDebugCategories(): DebugCategory[] | null {
   }
 }
 
-/**
- * Get default enabled categories based on environment
- */
 function getDefaultCategories(): DebugCategory[] {
   // In development, enable all categories
   if (isDevelopment()) {
@@ -140,9 +116,6 @@ function getDefaultCategories(): DebugCategory[] {
   return [];
 }
 
-/**
- * Check if a string is a valid debug category
- */
 function isValidCategory(cat: string): cat is DebugCategory {
   return [
     "app",
@@ -155,9 +128,6 @@ function isValidCategory(cat: string): cat is DebugCategory {
   ].includes(cat);
 }
 
-/**
- * Initialize debug configuration
- */
 function initializeConfig(): DebugConfig {
   // Priority: URL params > localStorage > environment defaults
   const urlCategories = getUrlDebugCategories();
@@ -173,15 +143,8 @@ function initializeConfig(): DebugConfig {
   };
 }
 
-// =============================================================================
-// CORE LOGGING FUNCTIONS
-// =============================================================================
-
 let config = initializeConfig();
 
-/**
- * Format timestamp for log prefix
- */
 function formatTimestamp(): string {
   const now = new Date();
   const hours = String(now.getHours()).padStart(2, "0");
@@ -191,18 +154,12 @@ function formatTimestamp(): string {
   return `${hours}:${minutes}:${seconds}.${ms}`;
 }
 
-/**
- * Create formatted log prefix
- */
 function createPrefix(category: DebugCategory): string {
   const timestamp = formatTimestamp();
   const categoryUpper = category.toUpperCase().padEnd(11); // Align category names
   return `[${timestamp}] [${categoryUpper}]`;
 }
 
-/**
- * Log a message with category and level
- */
 function logWithCategory(
   category: DebugCategory,
   level: LogLevel,
@@ -228,9 +185,6 @@ function logWithCategory(
   consoleMethod(`%c${prefix}`, `color: ${color}; font-weight: bold`, ...args);
 }
 
-/**
- * Create a category logger
- */
 function createCategoryLogger(category: DebugCategory): CategoryLogger {
   return {
     log: (...args: unknown[]) => logWithCategory(category, "log", args),
@@ -239,13 +193,6 @@ function createCategoryLogger(category: DebugCategory): CategoryLogger {
   };
 }
 
-// =============================================================================
-// PUBLIC API
-// =============================================================================
-
-/**
- * Debug loggers organized by category
- */
 export const debug = {
   app: createCategoryLogger("app"),
   sync: createCategoryLogger("sync"),
@@ -256,13 +203,7 @@ export const debug = {
   items: createCategoryLogger("items"),
 } as const;
 
-/**
- * Control API for enabling/disabling debug categories
- */
 export const debugControl = {
-  /**
-   * Enable specific debug categories
-   */
   enable(...categories: DebugCategory[]): void {
     for (const cat of categories) {
       config.enabled.add(cat);
@@ -270,9 +211,6 @@ export const debugControl = {
     this.save();
   },
 
-  /**
-   * Disable specific debug categories
-   */
   disable(...categories: DebugCategory[]): void {
     for (const cat of categories) {
       config.enabled.delete(cat);
@@ -280,9 +218,6 @@ export const debugControl = {
     this.save();
   },
 
-  /**
-   * Enable all debug categories
-   */
   enableAll(): void {
     config.enabled = new Set([
       "app",
@@ -296,31 +231,19 @@ export const debugControl = {
     this.save();
   },
 
-  /**
-   * Disable all debug categories (errors will still show)
-   */
   disableAll(): void {
     config.enabled.clear();
     this.save();
   },
 
-  /**
-   * Check if a category is enabled
-   */
   isEnabled(category: DebugCategory): boolean {
     return config.enabled.has(category);
   },
 
-  /**
-   * Get all enabled categories
-   */
   getEnabled(): DebugCategory[] {
     return Array.from(config.enabled);
   },
 
-  /**
-   * Save current configuration to localStorage
-   */
   save(): void {
     if (typeof window === "undefined") return;
 
@@ -337,17 +260,11 @@ export const debugControl = {
     }
   },
 
-  /**
-   * Reset configuration to defaults
-   */
   reset(): void {
     config = initializeConfig();
     debug.app.log("Debug configuration reset to defaults");
   },
 
-  /**
-   * Print help message
-   */
   help(): void {
     console.log(`
 %cEchoChamber Debug Utility
@@ -398,10 +315,6 @@ export const debugControl = {
     );
   },
 };
-
-// =============================================================================
-// EXPOSE TO WINDOW (for console access)
-// =============================================================================
 
 if (typeof window !== "undefined") {
   (window as any).debugControl = debugControl;

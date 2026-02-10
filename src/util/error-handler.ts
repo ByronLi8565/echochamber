@@ -11,13 +11,6 @@
 
 import { debug } from "./debug";
 
-// =============================================================================
-// ERROR CLASSES
-// =============================================================================
-
-/**
- * Base error class for all EchoChamber errors
- */
 export class EchoChamberError extends Error {
   public readonly category: string;
   public readonly userMessage: string;
@@ -47,9 +40,6 @@ export class EchoChamberError extends Error {
   }
 }
 
-/**
- * Audio-related errors (recording, playback, decoding)
- */
 export class AudioError extends EchoChamberError {
   constructor(
     message: string,
@@ -63,9 +53,6 @@ export class AudioError extends EchoChamberError {
   }
 }
 
-/**
- * Sync and network-related errors
- */
 export class SyncError extends EchoChamberError {
   constructor(
     message: string,
@@ -79,9 +66,6 @@ export class SyncError extends EchoChamberError {
   }
 }
 
-/**
- * Storage-related errors (IndexedDB, localStorage)
- */
 export class StorageError extends EchoChamberError {
   constructor(
     message: string,
@@ -95,9 +79,6 @@ export class StorageError extends EchoChamberError {
   }
 }
 
-/**
- * Import/Export errors
- */
 export class ImportExportError extends EchoChamberError {
   constructor(
     message: string,
@@ -111,9 +92,6 @@ export class ImportExportError extends EchoChamberError {
   }
 }
 
-/**
- * Validation errors
- */
 export class ValidationError extends EchoChamberError {
   constructor(
     message: string,
@@ -126,10 +104,6 @@ export class ValidationError extends EchoChamberError {
     super(message, { ...options, category: "app" });
   }
 }
-
-// =============================================================================
-// ERROR BOUNDARY WRAPPER
-// =============================================================================
 
 export interface ErrorBoundaryOptions {
   /** Operation name for logging */
@@ -245,10 +219,6 @@ function getUserMessage(
   return "An unexpected error occurred";
 }
 
-// =============================================================================
-// USER NOTIFICATIONS
-// =============================================================================
-
 interface NotificationOptions {
   duration?: number;
   type?: "error" | "warning" | "info";
@@ -256,9 +226,6 @@ interface NotificationOptions {
 
 let notificationContainer: HTMLElement | null = null;
 
-/**
- * Initialize notification container
- */
 function ensureNotificationContainer(): HTMLElement {
   if (notificationContainer && document.body.contains(notificationContainer)) {
     return notificationContainer;
@@ -272,9 +239,6 @@ function ensureNotificationContainer(): HTMLElement {
   return notificationContainer;
 }
 
-/**
- * Show an error notification to the user
- */
 export function showErrorNotification(
   message: string,
   options: NotificationOptions = {}
@@ -297,15 +261,12 @@ export function showErrorNotification(
   });
   notification.appendChild(closeBtn);
 
-  // Add to container
   container.appendChild(notification);
 
-  // Trigger animation
   requestAnimationFrame(() => {
     notification.classList.add("visible");
   });
 
-  // Auto-remove after duration
   if (duration > 0) {
     setTimeout(() => {
       removeNotification(notification);
@@ -313,9 +274,6 @@ export function showErrorNotification(
   }
 }
 
-/**
- * Remove a notification with animation
- */
 function removeNotification(notification: HTMLElement): void {
   notification.classList.remove("visible");
   notification.classList.add("hiding");
@@ -325,22 +283,12 @@ function removeNotification(notification: HTMLElement): void {
   }, 300);
 }
 
-/**
- * Clear all notifications
- */
 export function clearAllNotifications(): void {
   if (notificationContainer) {
     notificationContainer.innerHTML = "";
   }
 }
 
-// =============================================================================
-// SPECIALIZED ERROR HANDLERS
-// =============================================================================
-
-/**
- * Handle audio recording errors
- */
 export function handleAudioRecordingError(error: unknown): void {
   if (error instanceof DOMException) {
     switch (error.name) {
@@ -374,9 +322,6 @@ export function handleAudioRecordingError(error: unknown): void {
   }
 }
 
-/**
- * Handle audio decoding errors
- */
 export function handleAudioDecodingError(error: unknown): void {
   debug.audio.error("Audio decoding failed:", error);
   showErrorNotification(
@@ -384,17 +329,11 @@ export function handleAudioDecodingError(error: unknown): void {
   );
 }
 
-/**
- * Handle audio playback errors
- */
 export function handleAudioPlaybackError(error: unknown): void {
   debug.audio.error("Audio playback failed:", error);
   // Don't show notification for playback errors - they're often transient
 }
 
-/**
- * Handle IndexedDB errors
- */
 export function handleIndexedDBError(
   operation: string,
   error: unknown
@@ -423,17 +362,11 @@ export function handleIndexedDBError(
   }
 }
 
-/**
- * Handle sync connection errors
- */
 export function handleSyncConnectionError(error: unknown): void {
   debug.sync.error("Sync connection failed:", error);
   // Don't show notification - the UI already shows connection status
 }
 
-/**
- * Handle sync message errors
- */
 export function handleSyncMessageError(error: unknown): void {
   debug.sync.error("Sync message processing failed:", error);
   // Only show notification for critical sync errors
@@ -445,9 +378,6 @@ export function handleSyncMessageError(error: unknown): void {
   }
 }
 
-/**
- * Handle import/export errors
- */
 export function handleImportError(error: unknown): void {
   debug.app.error("Import failed:", error);
 
