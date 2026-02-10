@@ -1,4 +1,10 @@
 import { persistence } from "../sync/persistence.ts";
+import { ScopedListeners } from "../util/scoped-listeners.ts";
+import {
+  initMobileGestures,
+  updateGestureState,
+  disposeMobileGestures,
+} from "../util/mobile-gestures.ts";
 
 const container = document.getElementById("canvas-container")!;
 const world = document.getElementById("canvas-world")!;
@@ -13,18 +19,37 @@ let panStartOffsetX = 0;
 let panStartOffsetY = 0;
 let viewportSaveTimeout: number | null = null;
 
+const canvasListeners = new ScopedListeners();
+
 function applyTransform() {
   world.style.transformOrigin = "0 0";
   world.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
 }
 
-export function restoreViewport(x: number, y: number) {
+export function restoreViewport(x: number, y: number, s: number = 1) {
   offsetX = x;
   offsetY = y;
+  scale = s;
   applyTransform();
+  updateGestureState(offsetX, offsetY, scale);
 }
 
-container.addEventListener("pointerdown", (e) => {
+function handleTransformChange(newOffsetX: number, newOffsetY: number, newScale: number) {
+  offsetX = newOffsetX;
+  offsetY = newOffsetY;
+  scale = newScale;
+
+  // Debounced viewport persistence
+  if (viewportSaveTimeout !== null) {
+    clearTimeout(viewportSaveTimeout);
+  }
+  viewportSaveTimeout = setTimeout(() => {
+    persistence.updateViewport(offsetX, offsetY, scale);
+    viewportSaveTimeout = null;
+  }, 1000) as unknown as number;
+}
+
+canvasListeners.listen<PointerEvent>(container, "pointerdown", (e) => {
   // Only pan if clicking directly on the container or world (not on an item)
   if (e.target !== container && e.target !== world) return;
   // Only left mouse button
@@ -39,14 +64,15 @@ container.addEventListener("pointerdown", (e) => {
   container.setPointerCapture(e.pointerId);
 });
 
-container.addEventListener("pointermove", (e) => {
+canvasListeners.listen<PointerEvent>(container, "pointermove", (e) => {
   if (!isPanning) return;
   offsetX = panStartOffsetX + (e.clientX - panStartX);
   offsetY = panStartOffsetY + (e.clientY - panStartY);
   applyTransform();
+  updateGestureState(offsetX, offsetY, scale);
 });
 
-container.addEventListener("pointerup", (e) => {
+canvasListeners.listen<PointerEvent>(container, "pointerup", (e) => {
   if (!isPanning) return;
   isPanning = false;
   container.classList.remove("panning");
@@ -57,7 +83,7 @@ container.addEventListener("pointerup", (e) => {
     clearTimeout(viewportSaveTimeout);
   }
   viewportSaveTimeout = setTimeout(() => {
-    persistence.updateViewport(offsetX, offsetY);
+    persistence.updateViewport(offsetX, offsetY, scale);
     viewportSaveTimeout = null;
   }, 1000) as unknown as number;
 });
@@ -93,6 +119,7 @@ function zoomBy(factor: number): void {
   offsetX = cx - worldXAtCenter * scale;
   offsetY = cy - worldYAtCenter * scale;
   applyTransform();
+  updateGestureState(offsetX, offsetY, scale);
 }
 
 export function zoomIn(): void {
@@ -101,4 +128,18 @@ export function zoomIn(): void {
 
 export function zoomOut(): void {
   zoomBy(1 / 1.15);
+}
+
+// Initialize mobile gestures
+initMobileGestures(offsetX, offsetY, scale, handleTransformChange);
+
+// Export dispose function for cleanup
+export function disposeCanvas() {
+  canvasListeners.dispose();
+  disposeMobileGestures();
+}
+
+// Re-initialize mobile gestures when needed
+export function reinitializeMobileGestures() {
+  initMobileGestures(offsetX, offsetY, scale, handleTransformChange);
 }

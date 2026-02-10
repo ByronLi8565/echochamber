@@ -44,6 +44,7 @@ import {
   onSyncColorsChange,
 } from "../ui/settings.ts";
 import type { ThemeData } from "../sync/persistence.ts";
+import { initPermissionAlerts } from "../util/permission-alerts.ts";
 
 const container = document.getElementById("canvas-container")!;
 const btnAddSound = document.getElementById("btn-add-sound")!;
@@ -290,7 +291,7 @@ async function initializeApp() {
 
   // Viewport is local-only (not in CRDT)
   const viewport = persistence.getViewport();
-  restoreViewport(viewport.offsetX, viewport.offsetY);
+  restoreViewport(viewport.offsetX, viewport.offsetY, viewport.scale ?? 1);
 
   // Recreate all items from local doc (empty when joining a room)
   const audioContext = new AudioContext();
@@ -430,6 +431,9 @@ async function initializeApp() {
   if (typeof (window as any).feather !== "undefined") {
     (window as any).feather.replace();
   }
+
+  // Initialize permission alerts
+  initPermissionAlerts();
 }
 
 // --- Export/Import ---
