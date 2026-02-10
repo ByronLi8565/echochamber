@@ -16,6 +16,14 @@ import { notifyLocalChange, requestDeleteIntent } from "./sync.ts";
 import { deleteAudioFromR2 } from "./audio-sync.ts";
 import { normalizeSoundboardFilters } from "../util/soundboard-filters.ts";
 import { getConnectedSoundboardIds } from "../util/soundboard-graph.ts";
+import {
+  ImportExportError,
+  StorageError,
+  handleImportError,
+  handleExportError,
+  asyncErrorBoundary,
+} from "../util/error-handler";
+import { debug } from "../util/debug";
 
 const STORAGE_KEY = "echochamber-doc";
 const VIEWPORT_STORAGE_KEY = "echochamber-viewport";
@@ -669,110 +677,261 @@ class Persistence {
   }
 
   async exportToFile(): Promise<Blob> {
-    const metadata = this.doc.metadata ?? {
-      version: VERSION,
-      createdAt: Date.now(),
-      lastModified: Date.now(),
-    };
+    return asyncErrorBoundary(
+      async () => {
+        debug.persistence.log("Starting export...");
 
-    // Create manifest
-    const manifest = {
-      version: VERSION,
-      createdAt: metadata.createdAt,
-      lastModified: metadata.lastModified,
-      itemCount: Object.keys(this.doc.items ?? {}).length,
-    };
+        const metadata = this.doc.metadata ?? {
+          version: VERSION,
+          createdAt: Date.now(),
+          lastModified: Date.now(),
+        };
 
-    // Prepare files for ZIP
-    const files: Record<string, Uint8Array> = {
-      "manifest.json": strToU8(JSON.stringify(manifest, null, 2)),
-      "document.automerge": Automerge.save(this.doc),
-    };
+        // Create manifest
+        const manifest = {
+          version: VERSION,
+          createdAt: metadata.createdAt,
+          lastModified: metadata.lastModified,
+          itemCount: Object.keys(this.doc.items ?? {}).length,
+        };
 
-    // Add audio files
-    for (const [itemId, audioKey] of Object.entries(
-      this.doc.audioFiles ?? {},
-    )) {
-      const audioContext = new AudioContext();
-      const buffer = await loadAudio(audioKey, audioContext);
-      if (buffer) {
-        const serialized = serializeAudioBuffer(buffer);
-        const json = JSON.stringify({
-          sampleRate: serialized.sampleRate,
-          length: serialized.length,
-          numberOfChannels: serialized.numberOfChannels,
-          channelData: serialized.channelData.map((ch) => Array.from(ch)),
-        });
-        files[`audio/${itemId}.json`] = strToU8(json);
+        // Prepare files for ZIP
+        const files: Record<string, Uint8Array> = {
+          "manifest.json": strToU8(JSON.stringify(manifest, null, 2)),
+          "document.automerge": Automerge.save(this.doc),
+        };
+
+        // Add audio files
+        const audioFiles = Object.entries(this.doc.audioFiles ?? {});
+        debug.persistence.log(
+          `Exporting ${audioFiles.length} audio files...`
+        );
+
+        for (const [itemId, audioKey] of audioFiles) {
+          try {
+            const audioContext = new AudioContext();
+            const buffer = await loadAudio(audioKey, audioContext);
+            if (buffer) {
+              const serialized = serializeAudioBuffer(buffer);
+              const json = JSON.stringify({
+                sampleRate: serialized.sampleRate,
+                length: serialized.length,
+                numberOfChannels: serialized.numberOfChannels,
+                channelData: serialized.channelData.map((ch) => Array.from(ch)),
+              });
+              files[`audio/${itemId}.json`] = strToU8(json);
+              debug.persistence.log(`Exported audio for item ${itemId}`);
+            } else {
+              debug.persistence.warn(
+                `Audio buffer not found for item ${itemId}`
+              );
+            }
+          } catch (error) {
+            debug.persistence.warn(
+              `Failed to export audio for item ${itemId}:`,
+              error
+            );
+            // Continue with other audio files
+          }
+        }
+
+        // Create ZIP
+        try {
+          const zipped = zipSync(files, { level: 6 });
+          const zippedCopy = new Uint8Array(zipped);
+          const blob = new Blob([zippedCopy], { type: "application/zip" });
+          debug.persistence.log(
+            `Export complete: ${blob.size} bytes, ${Object.keys(files).length} files`
+          );
+          return blob;
+        } catch (error) {
+          debug.persistence.error("Failed to create ZIP:", error);
+          throw new ImportExportError("Failed to compress export data", {
+            cause: error,
+            userMessage: "Export compression failed. Please try again.",
+          });
+        }
+      },
+      {
+        operation: "export",
+        category: "persistence",
+        showNotification: true,
+        onError: handleExportError,
+        rethrow: true,
       }
-    }
-
-    // Create ZIP
-    const zipped = zipSync(files, { level: 6 });
-    const zippedCopy = new Uint8Array(zipped);
-    return new Blob([zippedCopy], { type: "application/zip" });
+    ).then((result) => result!);
   }
 
   async importFromFile(file: File): Promise<void> {
-    const arrayBuffer = await file.arrayBuffer();
-    const uint8 = new Uint8Array(arrayBuffer);
+    return asyncErrorBoundary(
+      async () => {
+        debug.persistence.log(`Starting import from file: ${file.name}`);
 
-    try {
-      // Unzip
-      const unzipped = unzipSync(uint8);
-
-      // Load document
-      const docBytes = unzipped["document.automerge"];
-      if (!docBytes) {
-        throw new Error("Invalid export: missing document.automerge");
-      }
-
-      const newDoc = this.ensureDocShape(
-        Automerge.load<EchoChamberDoc>(docBytes),
-      );
-
-      // Clear existing audio
-      const existingKeys = await getAllAudioKeys();
-      for (const key of existingKeys) {
-        await deleteAudio(key);
-      }
-
-      // Import audio files
-      const audioContext = new AudioContext();
-      for (const [path, data] of Object.entries(unzipped)) {
-        if (path.startsWith("audio/")) {
-          const itemId = path.replace("audio/", "").replace(".json", "");
-          const json = JSON.parse(strFromU8(data));
-          const channelData = json.channelData.map(
-            (ch: number[]) => new Float32Array(ch),
-          );
-
-          const buffer = audioContext.createBuffer(
-            json.numberOfChannels,
-            json.length,
-            json.sampleRate,
-          );
-
-          for (let i = 0; i < json.numberOfChannels; i++) {
-            buffer.copyToChannel(channelData[i], i);
-          }
-
-          const docAudioKey = newDoc.audioFiles?.[itemId] ?? `audio-${itemId}`;
-          await saveAudio(docAudioKey, buffer);
+        // Read file
+        let arrayBuffer: ArrayBuffer;
+        try {
+          arrayBuffer = await file.arrayBuffer();
+        } catch (error) {
+          throw new ImportExportError("Failed to read import file", {
+            cause: error,
+            userMessage: "Could not read the file. Please try again.",
+          });
         }
+
+        const uint8 = new Uint8Array(arrayBuffer);
+
+        // Unzip
+        let unzipped: Record<string, Uint8Array>;
+        try {
+          unzipped = unzipSync(uint8);
+          debug.persistence.log(
+            `Unzipped ${Object.keys(unzipped).length} files`
+          );
+        } catch (error) {
+          debug.persistence.error("Failed to unzip import file:", error);
+          throw new ImportExportError("Failed to decompress import file", {
+            cause: error,
+            userMessage:
+              "The file appears to be corrupted or is not a valid export.",
+          });
+        }
+
+        // Validate manifest
+        const manifestBytes = unzipped["manifest.json"];
+        if (manifestBytes) {
+          try {
+            const manifest = JSON.parse(strFromU8(manifestBytes));
+            debug.persistence.log(
+              `Import manifest: version=${manifest.version}, items=${manifest.itemCount}`
+            );
+
+            // Version check (optional - can be enhanced)
+            if (manifest.version && manifest.version !== VERSION) {
+              debug.persistence.warn(
+                `Version mismatch: file=${manifest.version}, current=${VERSION}`
+              );
+            }
+          } catch (error) {
+            debug.persistence.warn("Failed to parse manifest:", error);
+          }
+        }
+
+        // Load document
+        const docBytes = unzipped["document.automerge"];
+        if (!docBytes) {
+          throw new ImportExportError(
+            "Invalid export: missing document.automerge",
+            {
+              userMessage: "The file is missing required data and cannot be imported.",
+            }
+          );
+        }
+
+        let newDoc: Automerge.Doc<EchoChamberDoc>;
+        try {
+          newDoc = this.ensureDocShape(
+            Automerge.load<EchoChamberDoc>(docBytes)
+          );
+          debug.persistence.log(
+            `Loaded document with ${Object.keys(newDoc.items ?? {}).length} items`
+          );
+        } catch (error) {
+          debug.persistence.error("Failed to load Automerge document:", error);
+          throw new ImportExportError("Failed to load document data", {
+            cause: error,
+            userMessage: "The document data is corrupted or invalid.",
+          });
+        }
+
+        // Clear existing audio
+        try {
+          const existingKeys = await getAllAudioKeys();
+          debug.persistence.log(
+            `Clearing ${existingKeys.length} existing audio files...`
+          );
+          for (const key of existingKeys) {
+            await deleteAudio(key);
+          }
+        } catch (error) {
+          debug.persistence.warn("Failed to clear existing audio:", error);
+          // Continue - not critical
+        }
+
+        // Import audio files
+        const audioContext = new AudioContext();
+        let successCount = 0;
+        let failCount = 0;
+
+        for (const [path, data] of Object.entries(unzipped)) {
+          if (path.startsWith("audio/")) {
+            const itemId = path.replace("audio/", "").replace(".json", "");
+            try {
+              const json = JSON.parse(strFromU8(data));
+
+              // Validate audio data structure
+              if (
+                !json.numberOfChannels ||
+                !json.length ||
+                !json.sampleRate ||
+                !Array.isArray(json.channelData)
+              ) {
+                throw new Error("Invalid audio data structure");
+              }
+
+              const channelData = json.channelData.map(
+                (ch: number[]) => new Float32Array(ch)
+              );
+
+              const buffer = audioContext.createBuffer(
+                json.numberOfChannels,
+                json.length,
+                json.sampleRate
+              );
+
+              for (let i = 0; i < json.numberOfChannels; i++) {
+                if (channelData[i]) {
+                  buffer.copyToChannel(channelData[i], i);
+                }
+              }
+
+              const docAudioKey =
+                newDoc.audioFiles?.[itemId] ?? `audio-${itemId}`;
+              await saveAudio(docAudioKey, buffer);
+              successCount++;
+              debug.persistence.log(`Imported audio for item ${itemId}`);
+            } catch (error) {
+              failCount++;
+              debug.persistence.warn(
+                `Failed to import audio for item ${itemId}:`,
+                error
+              );
+              // Continue with other audio files
+            }
+          }
+        }
+
+        debug.persistence.log(
+          `Audio import complete: ${successCount} succeeded, ${failCount} failed`
+        );
+
+        // Replace current document
+        this.doc = newDoc;
+        this.localEditsBlocked = false;
+        this.saveDoc();
+
+        debug.persistence.log("Import complete - reloading page");
+
+        // Reload page to apply changes
+        window.location.reload();
+      },
+      {
+        operation: "import",
+        category: "persistence",
+        showNotification: true,
+        onError: handleImportError,
+        rethrow: true,
       }
-
-      // Replace current document
-      this.doc = newDoc;
-      this.localEditsBlocked = false;
-      this.saveDoc();
-
-      // Reload page to apply changes
-      window.location.reload();
-    } catch (error) {
-      console.error("Failed to import file:", error);
-      throw error;
-    }
+    ).then(() => {});
   }
 }
 

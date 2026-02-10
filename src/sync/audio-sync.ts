@@ -5,7 +5,7 @@
 
 import { Effect, Schedule, pipe } from "effect";
 import { saveAudio, loadAudio } from "./audio-storage.ts";
-import { itemRegistry } from "../core/items.ts";
+import { itemRegistry, isSoundboardItem } from "../core/items.ts";
 import { runPromise, SyncError } from "../util/effect-runtime.ts";
 
 // --- Module state ---
@@ -164,7 +164,9 @@ export async function downloadAudioIfMissing(
       markAudioKeyKnown(audioKey);
       // Already have it locally, just make sure the soundboard knows
       const item = itemRegistry.get(itemId);
-      if (item?.loadAudioBuffer) item.loadAudioBuffer(existing);
+      if (item && isSoundboardItem(item)) {
+        item.loadAudioBuffer(existing);
+      }
       return;
     }
 
@@ -187,7 +189,7 @@ export async function downloadAudioIfMissing(
 
     // Load into the soundboard component
     const item = itemRegistry.get(itemId);
-    if (item?.loadAudioBuffer) {
+    if (item && isSoundboardItem(item)) {
       item.loadAudioBuffer(buffer);
     }
 

@@ -4,7 +4,7 @@ import { invalidateLinksOverlay } from "./links.ts";
 import {
   getReadableTextColor,
   updateSoundboardAdaptiveTextColor,
-} from "../core/soundboard.ts";
+} from "../core/soundboard/index.ts";
 
 let paintMode = false;
 let selectedColor = "#ff6b6b";

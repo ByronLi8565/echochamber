@@ -1,129 +1,52 @@
-import type { CanvasItem } from "./items.ts";
-import { duplicateItem, generateId, removeItem } from "./items.ts";
-import { consumeDrag } from "./drag.ts";
-import { persistence } from "../sync/persistence.ts";
-import { saveAudio, deleteAudio } from "../sync/audio-storage.ts";
-import { uploadAudio } from "../sync/audio-sync.ts";
-import { sendAudioPlayEvent } from "../sync/sync.ts";
+/**
+ * Soundboard UI creation and styling utilities
+ * Handles DOM element creation, color calculations, and adaptive text colors
+ */
+
+import type { CanvasItem } from "../items.ts";
+import type { SoundState, FilterSet } from "./types.ts";
+import { duplicateItem, generateId, removeItem } from "../items.ts";
+import { consumeDrag } from "../drag.ts";
+import { persistence } from "../../sync/persistence.ts";
+import { saveAudio, deleteAudio } from "../../sync/audio-storage.ts";
+import { uploadAudio } from "../../sync/audio-sync.ts";
+import { sendAudioPlayEvent } from "../../sync/sync.ts";
 import {
   registerSoundboardPlayback,
   requestLinkedPlayback,
   unregisterSoundboardPlayback,
   getLinkedCount,
-} from "../ui/links.ts";
+} from "../../ui/links.ts";
 import {
   animateProgress,
   resetProgress,
   showLoopingAnimation,
   clearProgress,
   destroyProgressRing,
-} from "../ui/progress-ring.ts";
+} from "../../ui/progress-ring.ts";
 import {
   showRepeatBadge,
   showLoopBadge,
   showLinkBadge,
   hideBadge,
   destroyCounterBadge,
-} from "../ui/counter-badge.ts";
-import { normalizeSoundboardFilters } from "../util/soundboard-filters.ts";
+} from "../../ui/counter-badge.ts";
+import { normalizeSoundboardFilters } from "../../util/soundboard-filters.ts";
+import { getAudioContext, getReverbImpulse, reverseBuffer, clamp } from "./audio-engine.ts";
+import { assignHotkey, releaseHotkey, hotkeyRegistry } from "./hotkeys.ts";
 
-// --- Shared audio infrastructure ---
-
-let audioCtx: AudioContext | null = null;
-let reverbImpulse: AudioBuffer | null = null;
-
-function getAudioContext(): AudioContext {
-  if (!audioCtx) audioCtx = new AudioContext();
-  if (audioCtx.state === "suspended") audioCtx.resume();
-  return audioCtx;
-}
-
-function getReverbImpulse(ctx: AudioContext): AudioBuffer {
-  if (!reverbImpulse) {
-    const rate = ctx.sampleRate;
-    const length = rate * 2;
-    reverbImpulse = ctx.createBuffer(2, length, rate);
-    for (let ch = 0; ch < 2; ch++) {
-      const data = reverbImpulse.getChannelData(ch);
-      for (let i = 0; i < length; i++) {
-        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2);
-      }
-    }
-  }
-  return reverbImpulse;
-}
-
-function reverseBuffer(ctx: AudioContext, buffer: AudioBuffer): AudioBuffer {
-  const reversed = ctx.createBuffer(
-    buffer.numberOfChannels,
-    buffer.length,
-    buffer.sampleRate,
-  );
-  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-    const src = buffer.getChannelData(ch);
-    const dst = reversed.getChannelData(ch);
-    for (let i = 0; i < buffer.length; i++) {
-      dst[i] = src[buffer.length - 1 - i]!;
-    }
-  }
-  return reversed;
-}
-
-// --- Hotkey system ---
-
-const HOTKEY_POOL = "123456789QWERTYUIOPASDFGHJKLZXCVBNM".split("");
-export const hotkeyRegistry = new Map<string, () => void>();
-const usedHotkeys = new Set<string>();
-
-function assignHotkey(): string {
-  for (const key of HOTKEY_POOL) {
-    if (!usedHotkeys.has(key)) {
-      usedHotkeys.add(key);
-      return key;
-    }
-  }
-  return "";
-}
-
-function releaseHotkey(key: string) {
-  usedHotkeys.delete(key);
-  hotkeyRegistry.delete(key);
-}
-
-// --- Soundboard item ---
-
-type SoundState = "empty" | "recording" | "has-audio";
+// --- Sound counter for default naming ---
 let soundCounter = 0;
 
-interface FilterSet {
-  speedRate: number;
-  reverbIntensity: number;
-  reversed: boolean;
-  playConcurrently: boolean;
-  loopEnabled: boolean;
-  loopDelaySeconds: number;
-  repeatCount: number;
-  repeatDelaySeconds: number;
-}
+// --- Color utilities ---
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function areFiltersEqual(a: FilterSet, b: FilterSet): boolean {
-  return (
-    a.speedRate === b.speedRate &&
-    a.reverbIntensity === b.reverbIntensity &&
-    a.reversed === b.reversed &&
-    a.playConcurrently === b.playConcurrently &&
-    a.loopEnabled === b.loopEnabled &&
-    a.loopDelaySeconds === b.loopDelaySeconds &&
-    a.repeatCount === b.repeatCount &&
-    a.repeatDelaySeconds === b.repeatDelaySeconds
-  );
-}
-
-function parseCssColorToRgb(
+/**
+ * Parse a CSS color string to RGB components
+ * Supports hex (#RGB, #RRGGBB) and rgb/rgba formats
+ * @param color - CSS color string
+ * @returns RGB object or null if parsing fails
+ */
+export function parseCssColorToRgb(
   color: string,
 ): { r: number; g: number; b: number } | null {
   const hexMatch = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
@@ -155,6 +78,11 @@ function parseCssColorToRgb(
   };
 }
 
+/**
+ * Calculate relative luminance using WCAG formula
+ * @param rgb - RGB color components
+ * @returns Relative luminance (0-1)
+ */
 function relativeLuminance({
   r,
   g,
@@ -177,6 +105,12 @@ function relativeLuminance({
   return 0.2126 * rl + 0.7152 * gl + 0.0722 * bl;
 }
 
+/**
+ * Determine readable text color (black or white) based on background color
+ * Uses WCAG contrast ratio to choose the most readable option
+ * @param backgroundColor - CSS background color string
+ * @returns "#ffffff" or "#000000", or null if color parsing fails
+ */
 export function getReadableTextColor(backgroundColor: string): string | null {
   const rgb = parseCssColorToRgb(backgroundColor);
   if (!rgb) return null;
@@ -188,6 +122,10 @@ export function getReadableTextColor(backgroundColor: string): string | null {
   return whiteContrast >= blackContrast ? "#ffffff" : "#000000";
 }
 
+/**
+ * Update adaptive text colors for all soundboard elements
+ * Adjusts bubble text and label colors based on their backgrounds
+ */
 export function updateSoundboardAdaptiveTextColor(): void {
   const wrappers = document.querySelectorAll(".soundboard-wrapper");
   const canvasContainer = document.getElementById("canvas-container");
@@ -233,6 +171,29 @@ export function updateSoundboardAdaptiveTextColor(): void {
   }
 }
 
+/**
+ * Compare two filter sets for equality
+ */
+function areFiltersEqual(a: FilterSet, b: FilterSet): boolean {
+  return (
+    a.speedRate === b.speedRate &&
+    a.reverbIntensity === b.reverbIntensity &&
+    a.reversed === b.reversed &&
+    a.playConcurrently === b.playConcurrently &&
+    a.loopEnabled === b.loopEnabled &&
+    a.loopDelaySeconds === b.loopDelaySeconds &&
+    a.repeatCount === b.repeatCount &&
+    a.repeatDelaySeconds === b.repeatDelaySeconds
+  );
+}
+
+/**
+ * Create a soundboard component
+ * @param x - Initial x position
+ * @param y - Initial y position
+ * @param existingId - Optional existing ID for restoration
+ * @returns CanvasItem representing the soundboard
+ */
 export function createSoundboard(
   x: number,
   y: number,
@@ -869,13 +830,18 @@ export function createSoundboard(
     }
 
     const newKey = e.key.toUpperCase();
+    const HOTKEY_POOL = "123456789QWERTYUIOPASDFGHJKLZXCVBNM".split("");
     if (!HOTKEY_POOL.includes(newKey)) return;
-    if (usedHotkeys.has(newKey) && newKey !== hotkey) return; // already taken
+
+    // Check if already taken
+    const usedHotkeys = new Set(
+      Array.from(hotkeyRegistry.keys())
+    );
+    if (usedHotkeys.has(newKey) && newKey !== hotkey) return;
 
     // Release old, assign new
     if (hotkey) releaseHotkey(hotkey);
     hotkey = newKey;
-    usedHotkeys.add(hotkey);
     hotkeyRegistry.set(hotkey, playSound);
     hotkeyBubble.textContent = hotkey;
     stopListening();
@@ -936,7 +902,6 @@ export function createSoundboard(
       if (hotkey) releaseHotkey(hotkey);
       hotkey = itemData.hotkey;
       if (hotkey) {
-        usedHotkeys.add(hotkey);
         hotkeyRegistry.set(hotkey, playSound);
       }
       hotkeyBubble.textContent = hotkey || "—";

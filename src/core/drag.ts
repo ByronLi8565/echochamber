@@ -108,7 +108,7 @@ export function makeDraggable(item: CanvasItem) {
   });
 
   // Store cleanup function on the item
-  (item as any).cleanupDrag = () => {
+  item.cleanupDrag = () => {
     if (unsubscribe) unsubscribe();
   };
 }

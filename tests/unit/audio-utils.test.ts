@@ -64,7 +64,7 @@ class MockAudioContext {
   }
 }
 
-// Copy of reverseBuffer function from soundboard.ts for testing
+// Copy of reverseBuffer function from soundboard/audio-engine.ts for testing
 function reverseBuffer(
   ctx: MockAudioContext,
   buffer: MockAudioBuffer

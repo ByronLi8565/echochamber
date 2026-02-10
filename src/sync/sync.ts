@@ -9,6 +9,13 @@ import {
   encodeClientJsonMessage,
 } from "./sync-protocol.ts";
 import { SyncClient } from "./sync-client.ts";
+import {
+  SyncError,
+  handleSyncConnectionError,
+  handleSyncMessageError,
+  errorBoundary,
+} from "../util/error-handler";
+import { debug } from "../util/debug";
 
 interface SyncConfig {
   roomCode: string;
@@ -132,52 +139,96 @@ function sendSyncMessage(doc: Doc<any>): void {
 
 function handleOpen(): void {
   if (!config) return;
-  console.log("[Sync] WebSocket connected");
-  connected = true;
-  syncState = Automerge.initSyncState();
 
-  if (hasReceivedFirstSync) {
-    sendSyncMessage(config.getDoc());
-  }
+  errorBoundary(
+    () => {
+      debug.sync.log("WebSocket connected");
+      connected = true;
+      syncState = Automerge.initSyncState();
 
-  config.onConnected?.();
+      if (hasReceivedFirstSync) {
+        sendSyncMessage(config.getDoc());
+      }
+
+      config.onConnected?.();
+    },
+    {
+      operation: "websocket-open",
+      category: "sync",
+      showNotification: false,
+    }
+  );
 }
 
 function handleClose(): void {
-  console.log("[Sync] WebSocket disconnected");
-  connected = false;
-  config?.onDisconnected?.();
+  errorBoundary(
+    () => {
+      debug.sync.log("WebSocket disconnected");
+      connected = false;
+      config?.onDisconnected?.();
+    },
+    {
+      operation: "websocket-close",
+      category: "sync",
+      showNotification: false,
+    }
+  );
 }
 
 function handleError(): void {
-  console.log("[Sync] WebSocket error");
-  connected = false;
+  errorBoundary(
+    () => {
+      debug.sync.warn("WebSocket error occurred");
+      connected = false;
+      handleSyncConnectionError(new Error("WebSocket error"));
+    },
+    {
+      operation: "websocket-error",
+      category: "sync",
+      showNotification: false,
+    }
+  );
 }
 
 function handleJsonMessage(raw: string): void {
   const activeConfig = config;
   if (!activeConfig) return;
 
-  const decoded = decodeServerJsonMessage(raw);
-  if (Either.isLeft(decoded)) {
-    console.error("[Sync] Failed to parse JSON message:", decoded.left);
-    return;
-  }
+  errorBoundary(
+    () => {
+      const decoded = decodeServerJsonMessage(raw);
+      if (Either.isLeft(decoded)) {
+        debug.sync.error("Failed to parse JSON message:", decoded.left);
+        handleSyncMessageError(
+          new SyncError("Failed to parse sync message", {
+            cause: decoded.left,
+          })
+        );
+        return;
+      }
 
-  const message = decoded.right;
-  if (!message) return;
+      const message = decoded.right;
+      if (!message) return;
 
-  if (message.type === "connectionCount") {
-    const count = message.count;
-    console.log(`[Sync] Connection count: ${count}`);
-    updateConnectionCount(count);
-    activeConfig.onConnectionCount?.(count);
-    return;
-  }
+      if (message.type === "connectionCount") {
+        const count = message.count;
+        debug.sync.log(`Connection count: ${count}`);
+        updateConnectionCount(count);
+        activeConfig.onConnectionCount?.(count);
+        return;
+      }
 
-  if (message.type === "audioPlay" && syncAudioEnabled) {
-    activeConfig.onRemoteAudioPlay?.(message.itemId);
-  }
+      if (message.type === "audioPlay" && syncAudioEnabled) {
+        debug.sync.log(`Received remote audio play: ${message.itemId}`);
+        activeConfig.onRemoteAudioPlay?.(message.itemId);
+      }
+    },
+    {
+      operation: "handle-json-message",
+      category: "sync",
+      showNotification: false,
+    }
+  );
 }
 
 function handleBinaryMessage(payload: ArrayBuffer): void {
@@ -191,25 +242,38 @@ function handleBinaryMessage(payload: ArrayBuffer): void {
           const message = new Uint8Array(payload) as unknown as SyncMessage;
           const doc = activeConfig.getDoc();
 
-          console.log(
-            `[Sync] Received sync message, current doc has ${Object.keys(doc.items || {}).length} items`,
+          debug.sync.log(
+            `Received sync message, current doc has ${Object.keys(doc.items || {}).length} items`
           );
 
-          const [newDoc, newSyncState] = Automerge.receiveSyncMessage(
-            doc,
-            syncState,
-            message,
-          );
-          syncState = newSyncState;
+          let newDoc: Doc<any>;
+          let newSyncState: SyncState;
 
-          console.log(
-            `[Sync] After receive, new doc has ${Object.keys(newDoc.items || {}).length} items`,
+          try {
+            [newDoc, newSyncState] = Automerge.receiveSyncMessage(
+              doc,
+              syncState,
+              message
+            );
+            syncState = newSyncState;
+          } catch (error) {
+            debug.sync.error("Failed to process sync message:", error);
+            handleSyncMessageError(
+              new SyncError("Failed to apply sync message", {
+                cause: error,
+              })
+            );
+            throw error;
+          }
+
+          debug.sync.log(
+            `After receive, new doc has ${Object.keys(newDoc.items || {}).length} items`
           );
 
           if (!hasReceivedFirstSync) {
             hasReceivedFirstSync = true;
-            console.log(
-              "[Sync] First sync received - now ready to send local changes",
+            debug.sync.log(
+              "First sync received - now ready to send local changes"
             );
           }
 
@@ -220,9 +284,10 @@ function handleBinaryMessage(payload: ArrayBuffer): void {
       }),
       Effect.catchAll((error) =>
         Effect.sync(() => {
-          console.error("[Sync] Error processing sync message:", error);
-        }),
-      ),
-    ),
+          debug.sync.error("Error processing sync message:", error);
+          handleSyncMessageError(error as Error);
+        })
+      )
+    )
   );
 }
